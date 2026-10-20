@@ -19,7 +19,7 @@ There are no new user-facing features.
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Cutover correctness** - Fix tracee reaping, group-stop preservation, pidfd-first validation, re-sent signal reporting
-- [ ] **Phase 2: Test coverage** - Cover every untested path in TESTING.md, add parser unit tests
+- [x] **Phase 2: Test coverage** - Cover every untested path in TESTING.md, add parser unit tests
 - [ ] **Phase 3: Sanitizers and CI** - ASan/UBSan and analyzer builds, CI running the suite
 - [ ] **Phase 4: Efficiency** - Cheaper child enumeration, measured idle cost, documented limits
 
@@ -47,7 +47,11 @@ Plans:
   1. `make test` covers `--no-drain`, `--no-suppress`, `--wait`, `logs -f`, handover exec-failure recovery, long-path sockets and limit edges
   2. `make unit` runs parser tests for procfs.c and unixdiag.c
   3. The suite still passes three runs in a row (no flakes)
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [x] 02-01-PLAN.md — integration coverage for TST-01..05, plus the limit bugs it exposed
+- [x] 02-02-PLAN.md — `make unit`: procfs fixture tests and live sock_diag (TST-06)
 
 ### Phase 3: Sanitizers and CI
 **Goal**: Memory and UB errors and analyzer findings are caught automatically on every push
@@ -77,6 +81,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Cutover correctness | 1/1 | Complete | 2026-10-20 |
-| 2. Test coverage | 0/TBD | Not started | - |
+| 2. Test coverage | 2/2 | Complete | 2026-10-20 |
 | 3. Sanitizers and CI | 0/TBD | Not started | - |
 | 4. Efficiency | 0/TBD | Not started | - |

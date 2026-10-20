@@ -16,12 +16,12 @@ Milestone v1.0, Hardening. Each requirement maps to a roadmap phase.
 
 ### Testing
 
-- [ ] **TST-01**: Integration tests cover `--no-drain`, `--no-suppress` and `--wait` (successful case)
-- [ ] **TST-02**: Integration tests cover `logs -f` termination when the family exits
-- [ ] **TST-03**: Integration tests cover handover exec-failure recovery (family keeps answering, held fds still drained)
-- [ ] **TST-04**: Integration tests cover the long-runtime-path `control_addr` fallback (state dir longer than 108 bytes)
-- [ ] **TST-05**: Integration tests cover the limit edges: 64 targets, `MAX_STOLEN` held fds, member-history eviction
-- [ ] **TST-06**: Unit tests exercise `procfs.c` parsers and `unixdiag.c` against fixture data and live sockets
+- [x] **TST-01**: Integration tests cover `--no-drain`, `--no-suppress` and `--wait` (successful case)
+- [x] **TST-02**: Integration tests cover `logs -f` termination when the family exits
+- [x] **TST-03**: Integration tests cover handover exec-failure recovery (family keeps answering, held fds still drained)
+- [x] **TST-04**: Integration tests cover the long-runtime-path `control_addr` fallback (state dir longer than 108 bytes)
+- [x] **TST-05**: Integration tests cover the limit edges: 64 targets, `MAX_STOLEN` held fds, member-history eviction
+- [x] **TST-06**: Unit tests exercise `procfs.c` parsers and `unixdiag.c` against fixture data and live sockets
 
 ### Build & CI
 
@@ -68,12 +68,12 @@ Deferred and tracked, but not in the current roadmap.
 | REL-02 | Phase 1 | Complete |
 | REL-03 | Phase 1 | Complete |
 | REL-04 | Phase 1 | Complete |
-| TST-01 | Phase 2 | Pending |
-| TST-02 | Phase 2 | Pending |
-| TST-03 | Phase 2 | Pending |
-| TST-04 | Phase 2 | Pending |
-| TST-05 | Phase 2 | Pending |
-| TST-06 | Phase 2 | Pending |
+| TST-01 | Phase 2 | Complete |
+| TST-02 | Phase 2 | Complete |
+| TST-03 | Phase 2 | Complete |
+| TST-04 | Phase 2 | Complete |
+| TST-05 | Phase 2 | Complete |
+| TST-06 | Phase 2 | Complete |
 | BLD-01 | Phase 3 | Pending |
 | BLD-02 | Phase 3 | Pending |
 | BLD-03 | Phase 3 | Pending |

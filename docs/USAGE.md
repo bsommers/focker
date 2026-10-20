@@ -89,6 +89,8 @@ cutover: swallowed SIGx sent to PID during the cutover
 cutover: SIGx reached PID during the cutover; it was kept, so PID will stop
 cutover: SIGx was already pending for PID before the freeze; a copy sent during the cutover can't be told apart from it and was not swallowed
 cutover: PID exited before it could be frozen
+cutover: PID has more than 64 children; name at most 64 of them
+cutover: taking N more fds would hold more than 128 (holding M); nothing was changed
 cutover: thawed PID
 cutover: also adopted PID (CMD), orphaned by the same exit
 ```

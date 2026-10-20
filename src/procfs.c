@@ -11,6 +11,8 @@
 #include <string.h>
 #include <unistd.h>
 
+const char *proc_root = "/proc";
+
 static ssize_t read_small(const char *path, char *buf, size_t len)
 {
     int fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -79,8 +81,8 @@ static int cmp_pid(const void *a, const void *b)
 
 pid_t proc_ppid(pid_t pid)
 {
-    char path[64], v[32];
-    snprintf(path, sizeof path, "/proc/%d/status", pid);
+    char path[PATH_MAX], v[32];
+    snprintf(path, sizeof path, "%s/%d/status", proc_root, pid);
     if (status_field(path, "PPid:", v, sizeof v) < 0)
         return -1;
     return (pid_t)atoi(v);
@@ -88,8 +90,8 @@ pid_t proc_ppid(pid_t pid)
 
 char proc_state(pid_t pid)
 {
-    char path[64], v[32];
-    snprintf(path, sizeof path, "/proc/%d/status", pid);
+    char path[PATH_MAX], v[32];
+    snprintf(path, sizeof path, "%s/%d/status", proc_root, pid);
     if (status_field(path, "State:", v, sizeof v) < 0)
         return 0;
     return v[0];
@@ -97,8 +99,8 @@ char proc_state(pid_t pid)
 
 int proc_cmdline(pid_t pid, char *buf, size_t len)
 {
-    char path[64];
-    snprintf(path, sizeof path, "/proc/%d/cmdline", pid);
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s/%d/cmdline", proc_root, pid);
     ssize_t n = read_small(path, buf, len);
     if (n < 0)
         return -1;
@@ -110,7 +112,7 @@ int proc_cmdline(pid_t pid, char *buf, size_t len)
     buf[n] = '\0';
     if (n == 0) { /* kernel thread or zombie: fall back to comm */
         char comm[64];
-        snprintf(path, sizeof path, "/proc/%d/comm", pid);
+        snprintf(path, sizeof path, "%s/%d/comm", proc_root, pid);
         ssize_t c = read_small(path, comm, sizeof comm);
         if (c < 0)
             return -1;
@@ -123,7 +125,7 @@ int proc_cmdline(pid_t pid, char *buf, size_t len)
 
 int proc_children(pid_t parent, pid_t *out, int max)
 {
-    DIR *d = opendir("/proc");
+    DIR *d = opendir(proc_root);
     if (!d)
         return -1;
     int n = 0;
@@ -142,7 +144,7 @@ int proc_children(pid_t parent, pid_t *out, int max)
 
 int proc_list(struct procent **out)
 {
-    DIR *d = opendir("/proc");
+    DIR *d = opendir(proc_root);
     if (!d)
         return -1;
     struct procent *v = NULL;
@@ -190,8 +192,8 @@ bool proc_is_descendant(pid_t pid, pid_t ancestor)
 
 int proc_threads(pid_t pid, pid_t *out, int max)
 {
-    char path[64];
-    snprintf(path, sizeof path, "/proc/%d/task", pid);
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s/%d/task", proc_root, pid);
     DIR *d = opendir(path);
     if (!d)
         return -1;
@@ -213,8 +215,8 @@ static int cmp_fd(const void *a, const void *b)
 
 int proc_fds(pid_t pid, struct fdent *out, int max)
 {
-    char path[64];
-    snprintf(path, sizeof path, "/proc/%d/fd", pid);
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s/%d/fd", proc_root, pid);
     DIR *d = opendir(path);
     if (!d)
         return -1;
@@ -236,8 +238,8 @@ int proc_fds(pid_t pid, struct fdent *out, int max)
             f->kind = 'p';
         else if (sscanf(link, "socket:[%lu]", &f->ino) == 1)
             f->kind = 's';
-        char ipath[96], flags[32];
-        snprintf(ipath, sizeof ipath, "/proc/%d/fdinfo/%d", pid, f->fd);
+        char ipath[PATH_MAX], flags[32];
+        snprintf(ipath, sizeof ipath, "%s/%d/fdinfo/%d", proc_root, pid, f->fd);
         f->accmode = status_field(ipath, "flags:", flags, sizeof flags) == 0
                          ? (int)(strtol(flags, NULL, 8) & O_ACCMODE)
                          : O_RDWR;
@@ -251,14 +253,14 @@ int proc_fds(pid_t pid, struct fdent *out, int max)
 uint64_t proc_sigpending(pid_t pid)
 {
     uint64_t mask = 0;
-    char path[96], v[64];
-    snprintf(path, sizeof path, "/proc/%d/status", pid);
+    char path[PATH_MAX], v[64];
+    snprintf(path, sizeof path, "%s/%d/status", proc_root, pid);
     if (status_field(path, "ShdPnd:", v, sizeof v) == 0)
         mask |= strtoull(v, NULL, 16);
     pid_t tids[MAX_TIDS];
     int n = proc_threads(pid, tids, MAX_TIDS);
     for (int i = 0; i < n; i++) {
-        snprintf(path, sizeof path, "/proc/%d/task/%d/status", pid, tids[i]);
+        snprintf(path, sizeof path, "%s/%d/task/%d/status", proc_root, pid, tids[i]);
         if (status_field(path, "SigPnd:", v, sizeof v) == 0)
             mask |= strtoull(v, NULL, 16);
     }

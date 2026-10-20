@@ -20,7 +20,8 @@ last_mapped_at: 2026-10-20T03:34:23Z
 | `check NAME cmd...` | pass if the command succeeds |
 | `expect_rc NAME CODE cmd...` | pass if the exit code matches (on failure, prints the first lines of output) |
 | `wait_for cmd...` | retry for up to 3s, the only sanctioned way to wait for asynchronous process state |
-| `start NAME cmd...` | `focker run -d`, then wait until children and grandchildren exist |
+| `start [--linger] NAME cmd...` | `focker run -d`, then wait until a child with its own child exists |
+| `lacks PATTERN TEXT` / `nkids PID` | negative grep; child count |
 | `sup_of` / `old_of` / `ticker_of` / `kids_of` / `ppid_of` / `alive` | process lookups via the state dir, pgrep and ps |
 | `stop_family NAME` | `focker stop`, then wait for the control socket to disappear |
 
@@ -33,17 +34,20 @@ The `examples/` programs are the fixtures:
 
 Shell one-liners model specific parent behaviors: a parent that ignores TERM, one that kills its child on TERM, and nested parents.
 
-## Coverage (81 checks)
+## Coverage (117 integration + 35 unit checks)
 
 - CLI contract: usage errors exit 2, runtime errors exit 1, every `--help` succeeds, bad names, signals, timeouts and `FOCKER_FREEZE`.
 - run: foreground exit status passthrough, 127 for a missing program, duplicate names, rm.
 - cutover: dry run changes nothing; pipe takeover and drain; bystanders; tree annotations; socketpair peer takeover; a 5-thread freeze; pdeathsig swallowed with ptrace and fatal with signal; shutdown-kill swallowed; timeout rollback; KILL escalation; outsider and self refused; the target/parent conflict; grandchild generation-skip; `--from`; a target dying during thaw keeps its exit status; a SIGSTOP during the cutover is kept; a target dying before the freeze is caught by its pidfd (via the test-only `FOCKER_TEST_STALL_MS`); an already-pending signal is reported.
-- handover: PID kept, program replaced, `FOCKER_FDS` delivered, the new parent relays and reaps, and `ps -a` records it.
+- handover: PID kept, program replaced, `FOCKER_FDS` delivered, the new parent relays and reaps, and `ps -a` records it. A failed exec is logged and the family keeps answering and draining.
+- options and limits: `--no-drain`, `--no-suppress`, `--wait`; `logs -f` exits with the family; a 120-character runtime dir; 64 vs 65 targets; the 128-fd limit refused up front and freed slots reused; member history capped at 256; SIGINT from `kill` and from a pty.
+- unit (`make unit`): status fields, cmdline/comm fallback, children/descendants/threads, fds with fdinfo access modes, pending-signal OR, and sock_diag peers of a live socketpair.
 
 ## Gaps
 
-- No unit tests for `procfs.c` / `unixdiag.c` parsers in isolation.
-- Untested: `--no-drain`, `--no-suppress`, `--wait` success, `logs -f`, the handover exec-failure recovery path, the long-path `control_addr` fallback, the `MAX_*` limit edges, and foreground Ctrl-C behavior.
+- Closed in Phase 2: parser unit tests (`tests/unit.c`), `--no-drain`, `--no-suppress`, `--wait`, `logs -f`, handover exec failure, the long-path `control_addr` fallback, the `MAX_*` limits, Ctrl-C.
+- Still untested: `MAX_TIDS` (256 threads), `MAX_ARGS`, `MAX_FDENTS`, and `demo.sh`.
+- Pitfall: `wait_for test "$(...)"` expands once and never retries. Put the command substitution inside `bash -c` or a function.
 - No CI, and no sanitizer build (ASan/UBSan) target.
 
 ## Writing new tests

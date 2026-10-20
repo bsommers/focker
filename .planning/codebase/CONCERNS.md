@@ -17,7 +17,9 @@ last_mapped_at: 2026-10-20T03:34:23Z
 ## Known Bugs / Edge Cases
 
 - ~~Reaper vs tracee~~, ~~group-stop handling~~, ~~pending-signal repeats~~: fixed in Phase 1 (REL-01, REL-02, REL-04). The group-stop concern was misdiagnosed: the real bug was that SIGSTOP counted as a fresh signal and was swallowed. `PTRACE_CONT` is correct, and `PTRACE_LISTEN` would break swallowing (see docs/ARCHITECTURE.md §4.4). A re-sent pending signal is still undetectable (a kernel limit), and is now reported.
-- **`wait_for test "$(...)"` in `tests/run.sh` doesn't retry:** the command substitution runs once, before `wait_for` starts. `start()` uses it to wait for children. It works today because `run -d` returns after the first command has started, but it is a latent flake (Phase 2).
+- ~~`wait_for test "$(...)"` in `start()`~~: fixed in Phase 2.
+- ~~`--from` silently capped at 64 children~~, ~~held-fd slots never reused~~, ~~a cutover past 128 held fds went ahead without the extra fds~~: fixed in Phase 2.
+- **`handover` reports success before `execve`:** the reply is sent first (the socket is torn down for the exec), so if the exec fails, the client has already printed success and exited 0. The family recovers, and `focker.log` says `handover to X failed`, but the caller doesn't know.
 - **`proc_children` scans all of `/proc`**: O(number of processes) per call. It's called several times per request and once per loop iteration through `live_children()` (once a second, or per event).
 
 ## Security Considerations

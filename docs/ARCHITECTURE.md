@@ -35,8 +35,8 @@ From 1 and 2: to give a child a new parent, the new parent must be an ancestor s
 | `src/main.c` | 569 | argument parsing, help text, `run` (including detaching) |
 | `src/client.c` | 381 | control-socket client, `ps`, `tree`, `logs`, `rm`, `freeze`/`thaw` |
 | `src/supervisor.c` | 642 | subreaper loop, member table, drains, request dispatch, handover |
-| `src/cutover.c` | 682 | the cutover state machine |
-| `src/procfs.c` | 266 | `/proc` readers |
+| `src/cutover.c` | 699 | the cutover state machine |
+| `src/procfs.c` | 268 | `/proc` readers |
 | `src/unixdiag.c` | 100 | unix socket peer lookup |
 | `src/util.c` | 203 | shared helpers |
 
@@ -155,4 +155,4 @@ Then `execve`. If it fails, everything is rebuilt and the family stays with fock
 
 ## 7. Testing
 
-`tests/run.sh` runs 81 checks against real processes in a private `FOCKER_RUNTIME_DIR`, covering the CLI contract, run/rm, pipe and socketpair cutovers, multithreaded freezing, pdeathsig under both freeze methods, shutdown-kill swallowing, timeout rollback, grandchildren, `--from`, the cutover edge cases (a target dying during thaw, a SIGSTOP during the cutover, a target dying before the freeze, an already-pending signal), and handover with fd inheritance and reaping. The example programs in `examples/` are the test fixtures.
+`tests/unit.c` (`make unit`, 35 checks) runs the `procfs.c` readers against a fixture tree (`proc_root` points at a temp dir) and `unixdiag.c` against a live socketpair. `tests/run.sh` runs 117 checks against real processes in a private `FOCKER_RUNTIME_DIR`, covering the CLI contract, run/rm, pipe and socketpair cutovers, multithreaded freezing, pdeathsig under both freeze methods, shutdown-kill swallowing, timeout rollback, grandchildren, `--from`, the cutover edge cases (a target dying during thaw, a SIGSTOP during the cutover, a target dying before the freeze, an already-pending signal), `--no-drain`/`--no-suppress`/`--wait`, `logs -f`, handover with fd inheritance and reaping and its exec-failure recovery, runtime paths past `sun_path`, the 64-target/128-fd/256-member limits, and SIGINT from a tty (via python3's `pty`, skipped without python3) and from `kill`. The example programs in `examples/` are the test fixtures.

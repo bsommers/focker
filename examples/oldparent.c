@@ -17,7 +17,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define MAXKIDS 16
+#define MAXKIDS 128
 
 int main(int argc, char **argv)
 {

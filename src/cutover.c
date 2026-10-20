@@ -367,11 +367,19 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
             sb_printf(out, "cutover: %d is not a descendant of this family\n", o->from);
             return 1;
         }
-        nv = proc_children(o->from, v, MAX_PIDS);
-        if (nv <= 0) {
+        pid_t kids[MAX_PIDS + 1]; /* one extra, so a parent over the limit is noticed */
+        int nk = proc_children(o->from, kids, MAX_PIDS + 1);
+        if (nk <= 0) {
             sb_printf(out, "cutover: %d has no children\n", o->from);
             return 1;
         }
+        if (nk > MAX_PIDS) {
+            sb_printf(out, "cutover: %d has more than %d children; name at most %d of them\n", o->from, MAX_PIDS,
+                      MAX_PIDS);
+            return 1;
+        }
+        memcpy(v, kids, (size_t)nk * sizeof *v);
+        nv = nk;
     }
     for (int i = 0; i < nreq; i++) {
         if (index_of(v, nv, req[i]) >= 0)
@@ -450,17 +458,30 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
                 by[nby++] = kids[i];
     }
 
-    static struct plan_fd plan[MAX_STOLEN];
+    /* forget held fds that have since been closed, so their slots can be reused */
+    int nheld = 0;
+    for (int i = 0; i < f->nstolen; i++)
+        if (f->stolen[i].fd >= 0 || f->stolen[i].logfd >= 0)
+            f->stolen[nheld++] = f->stolen[i];
+    f->nstolen = nheld;
+
+    static struct plan_fd plan[MAX_STOLEN + 1];
     int nplan = 0;
     if (o->steal) {
         if (unixdiag_load() < 0)
             sb_printf(out, "cutover: cannot read unix socket peers (%s); only pipes will be matched\n",
                       strerror(errno));
         for (int i = 0; i < nv; i++) {
-            int n = plan_fds(v[i], op[i], plan + nplan, MAX_STOLEN - nplan);
+            int n = plan_fds(v[i], op[i], plan + nplan, MAX_STOLEN + 1 - nplan);
             if (n > 0)
                 nplan += n;
         }
+    }
+    /* refuse up front: a child whose pipe isn't taken over dies of SIGPIPE */
+    if (f->nstolen + nplan > MAX_STOLEN) {
+        sb_printf(out, "cutover: taking %s%d more fd%s would hold more than %d (holding %d); nothing was changed\n",
+                  nplan > MAX_STOLEN ? "at least " : "", nplan, nplan == 1 ? "" : "s", MAX_STOLEN, f->nstolen);
+        goto done;
     }
 
     if (o->dry_run) {
@@ -529,10 +550,6 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
     }
     for (int i = 0; i < nplan; i++) {
         const struct plan_fd *p = &plan[i];
-        if (f->nstolen == MAX_STOLEN) {
-            sb_printf(out, "cutover: holding %d fds already; not taking more\n", MAX_STOLEN);
-            break;
-        }
         int nfd = pidfd_getfd_(pidfds[index_of(parents, nparents, p->parent)], p->parent_fd);
         if (nfd < 0) {
             sb_printf(out, "cutover: cannot take fd %d of %d: %s\n", p->parent_fd, p->parent, strerror(errno));

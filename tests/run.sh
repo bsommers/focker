@@ -41,12 +41,16 @@ alive()    { [ -n "$(ps -o pid= -p "$1" 2>/dev/null)" ] && [ "$(ps -o stat= -p "
 wait_for() { # up to 3s for a command to succeed
     for _ in $(seq 60); do "$@" && return 0; sleep 0.05; done; return 1
 }
-start() { # name cmd...  -> starts detached, waits for grandchildren
+has_grandchild() { local k; k=$(kids_of "$1" | head -1); [ -n "$k" ] && [ -n "$(kids_of "$k")" ]; }
+start() { # [--linger] name cmd...  -> starts detached, waits for grandchildren
+    local opt=()
+    [ "$1" = --linger ] && { opt=(--linger); shift; }
     local name=$1; shift
-    "$F" run -d -n "$name" -- "$@" >/dev/null || return 1
-    local sup; sup=$(sup_of "$name")
-    wait_for test -n "$(kids_of "$sup")" && wait_for test -n "$(kids_of "$(kids_of "$sup" | head -1)")"
+    "$F" run -d "${opt[@]}" -n "$name" -- "$@" >/dev/null || return 1
+    wait_for has_grandchild "$(sup_of "$name")"
 }
+lacks() { ! grep -q -- "$1" <<<"$2"; }   # pattern text
+nkids() { kids_of "$1" | wc -l; }
 old_of()    { kids_of "$(sup_of "$1")" | head -1; }
 ticker_of() { kids_of "$(old_of "$1")" | head -1; }
 stop_family() { "$F" stop "$1" >/dev/null 2>&1; wait_for test ! -S "$FOCKER_RUNTIME_DIR/$1/control.sock"; }
@@ -180,15 +184,9 @@ stop_family from
 check "family exits once empty" test ! -S "$FOCKER_RUNTIME_DIR/from/control.sock"
 
 echo "cutover edge cases"
-start_linger() { # like start, but the family outlives its last child so inspect still answers
-    local name=$1; shift
-    "$F" run -d --linger -n "$name" -- "$@" >/dev/null || return 1
-    local sup; sup=$(sup_of "$name")
-    wait_for test -n "$(kids_of "$sup")" && wait_for test -n "$(kids_of "$(kids_of "$sup" | head -1)")"
-}
 # REL-01: URG (23) is passed through before VTALRM (26) is swallowed, and -x 23 makes it fatal,
 # so the ticker exits inside the swallow loop while still traced.
-start_linger dies sh -c "$B/ticker -i 50 -d 26 -x 23 >/dev/null & trap 'kill -URG \$!; exit' TERM; wait"
+start --linger dies sh -c "$B/ticker -i 50 -d 26 -x 23 >/dev/null & trap 'kill -URG \$!; exit' TERM; wait"
 T=$(ticker_of dies)
 "$F" cutover dies "$T" >/dev/null 2>&1
 check "a target that dies during thaw keeps its exit status" \
@@ -226,6 +224,137 @@ out=$("$F" cutover pend "$T")
 check "an already-pending signal is reported" grep -q "SIGUSR1 was already pending for $T" <<<"$out"
 check "the target with a pending signal survives" alive "$T"
 stop_family pend
+
+echo "cutover options"
+start nodrain "$B/oldparent" 1 -- -i 50
+T=$(ticker_of nodrain)
+out=$("$F" cutover --no-drain nodrain "$T")
+check "--no-drain holds the pipe open" grep -q "took over pipe-r .*held open" <<<"$out"
+check "--no-drain writes no capture file" test ! -e "$FOCKER_RUNTIME_DIR/nodrain/adopted-$T-fd1.log"
+check "inspect lists the held fd without a log" grep -Eq "pipe-r +$T +1 +[0-9]+ +-$" <<<"$("$F" inspect nodrain)"
+check "--no-drain keeps the child alive" alive "$T"
+stop_family nodrain
+
+start nosup "$B/oldparent" 1 -- -i 50 -d 1
+T=$(ticker_of nosup)
+out=$("$F" cutover --no-suppress nosup "$T")
+check "--no-suppress swallows nothing" lacks swallowed "$out"
+check "--no-suppress delivers the pdeathsig" wait_for bash -c "! kill -0 $T 2>/dev/null"
+stop_family nosup
+
+start waiter sh -c "$B/ticker -i 50 >/dev/null & exec sleep 1"
+SUP=$(sup_of waiter) T=$(ticker_of waiter)
+out=$("$F" cutover --wait -t 5 waiter "$T"); rc=$?
+check "--wait succeeds once the parent exits on its own" test $rc -eq 0
+check "--wait doesn't signal the parent" grep -q "waiting for old parent" <<<"$out"
+check "--wait adopts the child" test "$(ppid_of "$T")" = "$SUP"
+stop_family waiter
+
+echo "logs"
+start logf "$B/oldparent" 1 -- -i 50
+"$F" logs -f logf >"$FOCKER_RUNTIME_DIR/logf.out" 2>&1 & lpid=$!
+sleep 0.3
+stop_family logf
+check "logs -f exits when the family stops" wait_for bash -c "! kill -0 $lpid 2>/dev/null"
+check "logs -f printed the log" grep -q "started" "$FOCKER_RUNTIME_DIR/logf.out"
+kill "$lpid" 2>/dev/null; wait "$lpid" 2>/dev/null
+
+echo "handover failure"
+start hof "$B/oldparent" 1 -- -i 50
+T=$(ticker_of hof)
+"$F" cutover hof "$T" >/dev/null
+printf '#!/nonexistent/interpreter\n' >"$FOCKER_RUNTIME_DIR/badparent"; chmod +x "$FOCKER_RUNTIME_DIR/badparent"
+"$F" handover hof -- "$FOCKER_RUNTIME_DIR/badparent" >/dev/null 2>&1
+check "a failed handover is logged" wait_for grep -q "handover to .* failed" "$FOCKER_RUNTIME_DIR/hof/focker.log"
+expect_rc "the family still answers after a failed handover" 0 "$F" inspect hof
+check "ps -a doesn't report a handover" lacks "handed over" "$("$F" ps -a | grep hof)"
+LOG=$FOCKER_RUNTIME_DIR/hof/adopted-$T-fd1.log
+n1=$(wc -l <"$LOG")
+check "held fds still drain after a failed handover" wait_for bash -c "test \$(wc -l <'$LOG') -gt $n1"
+stop_family hof
+
+echo "long runtime path"
+LONG=$FOCKER_RUNTIME_DIR/$(printf 'd%.0s' $(seq 120))
+mkdir -m 700 "$LONG"
+FOCKER_RUNTIME_DIR=$LONG start longp "$B/oldparent" 1 -- -i 50
+expect_rc "a runtime path past sun_path's 108 bytes still answers" 0 env FOCKER_RUNTIME_DIR="$LONG" "$F" inspect longp
+T=$(FOCKER_RUNTIME_DIR=$LONG ticker_of longp)
+expect_rc "cutover works over the /proc/self/fd socket path" 0 env FOCKER_RUNTIME_DIR="$LONG" "$F" cutover longp "$T"
+FOCKER_RUNTIME_DIR=$LONG stop_family longp
+check "the long-path family shut down" test ! -S "$LONG/longp/control.sock"
+
+echo "limits"
+start wide "$B/oldparent" 65 -- -i 200
+OLD=$(old_of wide)
+wait_for bash -c "test \$(pgrep -P $OLD | wc -l) -eq 65"
+out=$("$F" cutover --from "$OLD" wide 2>&1); rc=$?
+check "--from refuses a parent with more than 64 children" test $rc -eq 1
+check "the refusal names the limit" grep -q "$OLD has more than 64 children" <<<"$out"
+check "nothing moved after the refusal" test "$(nkids "$OLD")" -eq 65
+mapfile -t K < <(kids_of "$OLD")
+expect_rc "65 named targets are a usage error" 2 "$F" cutover wide "${K[@]}"
+expect_rc "64 named targets work" 0 "$F" cutover wide "${K[@]:0:64}"
+check "all 64 were adopted" test "$(for k in "${K[@]:0:64}"; do ppid_of "$k"; done | grep -cx "$(sup_of wide)")" -eq 64
+stop_family wide
+
+start fds sh -c "$B/oldparent 64 -- -i 200 & $B/oldparent 64 -- -i 200 & $B/oldparent 1 -- -i 200 & wait"
+SH=$(old_of fds)
+wait_for bash -c "test \$(for p in \$(pgrep -P $SH); do pgrep -P \$p; done | wc -l) -eq 129"
+A= Bp= C=
+for p in $(kids_of "$SH"); do
+    if [ "$(nkids "$p")" -eq 1 ]; then C=$p; elif [ -z "$A" ]; then A=$p; else Bp=$p; fi
+done
+AT=$(kids_of "$A")
+expect_rc "a cutover taking 64 fds works" 0 "$F" cutover --from "$A" fds
+expect_rc "a second one reaching 128 held fds works" 0 "$F" cutover --from "$Bp" fds
+CT=$(kids_of "$C")
+out=$("$F" cutover --dry-run --from "$C" fds 2>&1); rc=$?
+check "dry run reports the held-fd limit" test $rc -eq 1 -a -n "$(grep 'more than 128' <<<"$out")"
+out=$("$F" cutover --from "$C" fds 2>&1); rc=$?
+check "a cutover past 128 held fds is refused" test $rc -eq 1
+check "the refused cutover left everything in place" test "$(ppid_of "$CT")" = "$C"
+kill $AT
+check "freed fds are released" wait_for bash -c "test \$('$F' inspect fds | grep -c ' pipe-r ') -le 64"
+expect_rc "freed slots are reused by the next cutover" 0 "$F" cutover --from "$C" fds
+stop_family fds
+
+"$F" run -d -n evict -- sh -c "for i in \$(seq 300); do (sleep 0 &); done; touch '$FOCKER_RUNTIME_DIR/evict.done'; exec sleep 30" >/dev/null
+wait_for test -e "$FOCKER_RUNTIME_DIR/evict.done"; sleep 0.3
+members=$("$F" inspect evict | sed -n '/^members:/,/^$/p' | grep -Ec '^  [0-9]')
+check "member history stops at 256" test "$members" -eq 256
+check "the running first command is never evicted" grep -Eq '^  [0-9]+ +run ' <<<"$("$F" inspect evict)"
+stop_family evict
+
+echo "signals to focker"
+"$F" run -d -n fwd -- sleep 30 >/dev/null
+kill -INT "$(sup_of fwd)"
+check "kill -INT to focker is forwarded to the family" wait_for grep -qs "killed by SIGINT" "$FOCKER_RUNTIME_DIR/fwd/exit"
+if command -v python3 >/dev/null; then
+    python3 - "$F" "$FOCKER_RUNTIME_DIR/fgc/control.sock" <<'PY'
+import os, pty, select, sys, time
+pid, fd = pty.fork()
+if pid == 0:
+    os.execv(sys.argv[1], [sys.argv[1], "run", "-n", "fgc", "--", "sleep", "30"])
+for _ in range(100):
+    if os.path.exists(sys.argv[2]):
+        break
+    time.sleep(0.05)
+os.write(fd, b"\x03")
+while True:
+    r, _, _ = select.select([fd], [], [], 5)
+    try:
+        if not r or not os.read(fd, 1024):
+            break
+    except OSError:
+        break
+sys.exit(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))
+PY
+    rc=$?
+    check "Ctrl-C ends a foreground family with 130" test $rc -eq 130
+    check "the exit record says SIGINT" grep -q "killed by SIGINT" "$FOCKER_RUNTIME_DIR/fgc/exit"
+else
+    printf '  skip  Ctrl-C (needs python3 for a pty)\n'
+fi
 
 echo
 echo "$pass passed, $fail failed"

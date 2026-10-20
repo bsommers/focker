@@ -25,5 +25,5 @@ These come from the kernel or from deliberate scope decisions. Each entry says w
 - **Already-pending signals can't be swallowed.** If a standard signal is pending (usually because the child blocks it) when the freeze starts, a copy sent during the cutover merges into it, and the kernel keeps no trace of the second send. focker names such signals in the transcript and leaves them pending.
 - **Handover is one-way.** After `handover`, focker no longer controls the family. The new program owns everything.
 - **Requests are serialized.** One cutover at a time per family, and while one is running the supervisor doesn't drain other pipes. A cutover usually takes milliseconds, and at most `--timeout`.
-- **Limits:** 64 targets per cutover, 128 held fds and 256 remembered members per family (the oldest dead members are forgotten first).
+- **Limits:** 64 targets per cutover (`--from` a parent with more children is refused; name up to 64 of them instead), 128 held fds per family (a cutover that would go past it is refused before anything is frozen; slots of closed fds are reused), and 256 remembered members per family (the oldest dead members are forgotten first).
 - **Linux only**, 5.6 or later (`pidfd_getfd`, `pidfd_send_signal`, `pidfd_open`).

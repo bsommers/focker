@@ -8,7 +8,7 @@ SRC      := $(wildcard src/*.c)
 OBJ      := $(SRC:src/%.c=$(BUILD)/%.o)
 EXAMPLES := $(BUILD)/ticker $(BUILD)/oldparent $(BUILD)/newparent
 
-.PHONY: all examples test demo install uninstall clean
+.PHONY: all examples unit test demo install uninstall clean
 
 all: $(BUILD)/focker examples
 
@@ -26,7 +26,13 @@ examples: $(EXAMPLES)
 $(BUILD)/%: examples/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -pthread -o $@ $<
 
-test: all
+$(BUILD)/unit: tests/unit.c $(BUILD)/procfs.o $(BUILD)/util.o $(BUILD)/unixdiag.o src/focker.h
+	$(CC) $(CFLAGS) -o $@ tests/unit.c $(BUILD)/procfs.o $(BUILD)/util.o $(BUILD)/unixdiag.o
+
+unit: $(BUILD)/unit
+	$(BUILD)/unit
+
+test: all unit
 	tests/run.sh
 
 demo: all
