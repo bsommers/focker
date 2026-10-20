@@ -16,14 +16,13 @@ last_mapped_at: 2026-10-20T03:34:23Z
 
 ## Known Bugs / Edge Cases
 
-- **Reaper vs tracee:** if a target dies while ptrace-attached and is already reparented to focker, `waitpid(tid, __WALL)` inside thaw may reap it, so the main reaper never records its exit status. (`thaw_ptrace`)
-- **ptrace group-stop handling:** in the swallow loop, a `PTRACE_EVENT_STOP` caused by a real group-stop is continued with `PTRACE_CONT`, which overrides a job-control stop that arrived mid-cutover. `PTRACE_LISTEN` would preserve it.
-- **Pending-signal diff can miss repeats.** A signal that was already pending before the freeze and sent again during the cutover isn't "fresh", so it isn't swallowed (standard signals coalesce).
+- ~~Reaper vs tracee~~, ~~group-stop handling~~, ~~pending-signal repeats~~: fixed in Phase 1 (REL-01, REL-02, REL-04). The group-stop concern was misdiagnosed: the real bug was that SIGSTOP counted as a fresh signal and was swallowed. `PTRACE_CONT` is correct, and `PTRACE_LISTEN` would break swallowing (see docs/ARCHITECTURE.md §4.4). A re-sent pending signal is still undetectable (a kernel limit), and is now reported.
+- **`wait_for test "$(...)"` in `tests/run.sh` doesn't retry:** the command substitution runs once, before `wait_for` starts. `start()` uses it to wait for children. It works today because `run -d` returns after the first command has started, but it is a latent flake (Phase 2).
 - **`proc_children` scans all of `/proc`**: O(number of processes) per call. It's called several times per request and once per loop iteration through `live_children()` (once a second, or per event).
 
 ## Security Considerations
 
-- `pidfd_getfd` and ptrace are limited to descendants by Yama scope 1. focker adds no checks beyond descendant validation (`proc_is_descendant`), and a PID could be recycled between validation and use. The pidfd is opened after validation, so there is a small TOCTOU window for the freeze target. Opening a pidfd first and validating through it would close that.
+- `pidfd_getfd` and ptrace are limited to descendants by Yama scope 1. focker adds no checks beyond descendant validation (`proc_is_descendant`). Since Phase 1 (REL-03), targets are pinned with a pidfd before validation and re-checked before and after the freeze, which closes the recycled-PID window for targets. `--from` is still resolved by PID.
 - The control socket trusts any same-uid peer, so any process of that user can trigger cutovers or handovers.
 
 ## Missing Features (from docs/LIMITATIONS.md)

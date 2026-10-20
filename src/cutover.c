@@ -20,6 +20,8 @@
 #define SIGBIT(s) (1ULL << ((s) - 1))
 /* routine traffic that is never swallowed, even if it arrives mid-cutover */
 #define BENIGN (SIGBIT(SIGCHLD) | SIGBIT(SIGCONT) | SIGBIT(SIGWINCH) | SIGBIT(SIGURG))
+/* job-control stops are a request, not fallout of the old parent's death: never swallowed */
+#define JOBCTL (SIGBIT(SIGSTOP) | SIGBIT(SIGTSTP) | SIGBIT(SIGTTIN) | SIGBIT(SIGTTOU))
 
 struct frozen {
     pid_t    pid;
@@ -65,18 +67,38 @@ static const char *cmd_of(pid_t pid)
 
 /* ---- ptrace freezing --------------------------------------------------- */
 
-/* Wait for tid to be in a ptrace-stop. A signal-delivery-stop counts too: the
- * thread is stopped, and we remember the signal so it is not lost. */
-static int wait_ptrace_stop(pid_t tid, int *inject)
+/* waitpid() for a tracee, except that the exit of a thread-group leader that
+ * is already focker's child is only peeked at, never reaped: the supervisor's
+ * reaper records its status. Returns tid, 0 (WNOHANG and nothing yet) or -1
+ * (gone, or left for the reaper). */
+static pid_t wait_tracee(pid_t pid, pid_t tid, int *st, int flags)
 {
     for (;;) {
-        int st;
-        if (waitpid(tid, &st, __WALL) < 0) {
+        siginfo_t si = { 0 };
+        if (waitid(P_PID, (id_t)tid, &si, WEXITED | WSTOPPED | WNOWAIT | __WALL | flags) < 0) {
             if (errno == EINTR)
                 continue;
             return -1;
         }
-        if (!WIFSTOPPED(st))
+        if (si.si_pid == 0)
+            return 0;
+        bool exited = si.si_code == CLD_EXITED || si.si_code == CLD_KILLED || si.si_code == CLD_DUMPED;
+        if (exited && tid == pid && proc_ppid(pid) == getpid())
+            return -1;
+        pid_t r = waitpid(tid, st, __WALL | WNOHANG);
+        if (r <= 0 || !WIFSTOPPED(*st))
+            return -1;
+        return r;
+    }
+}
+
+/* Wait for tid to be in a ptrace-stop. A signal-delivery-stop counts too: the
+ * thread is stopped, and we remember the signal so it is not lost. */
+static int wait_ptrace_stop(pid_t pid, pid_t tid, int *inject)
+{
+    for (;;) {
+        int st;
+        if (wait_tracee(pid, tid, &st, 0) < 0)
             return -1; /* thread exited */
         if ((st >> 16) != PTRACE_EVENT_STOP)
             *inject = WSTOPSIG(st);
@@ -122,7 +144,7 @@ static int freeze_ptrace(struct frozen *z, struct sbuf *out)
             z->inject[z->ntids] = 0;
             z->ntids++;
             added = true;
-            if (ptrace(PTRACE_INTERRUPT, tids[i], NULL, NULL) < 0 || wait_ptrace_stop(tids[i], &inj) < 0) {
+            if (ptrace(PTRACE_INTERRUPT, tids[i], NULL, NULL) < 0 || wait_ptrace_stop(z->pid, tids[i], &inj) < 0) {
                 z->ntids--; /* thread exited under us */
                 continue;
             }
@@ -168,16 +190,20 @@ static void thaw_ptrace(struct frozen *z, uint64_t swallow, struct sbuf *out)
                 if (!live[i])
                     continue;
                 int st;
-                pid_t r = waitpid(z->tids[i], &st, __WALL | WNOHANG);
+                pid_t r = wait_tracee(z->pid, z->tids[i], &st, WNOHANG);
                 if (r == 0)
                     continue;
-                if (r < 0 || !WIFSTOPPED(st)) {
+                if (r < 0) {
                     live[i] = false;
                     continue;
                 }
                 int s = WSTOPSIG(st);
                 if ((st >> 16) == PTRACE_EVENT_STOP) {
-                    s = 0; /* our leftover interrupt trap */
+                    /* our leftover interrupt trap, or a group-stop (SIGSTOP is never
+                     * swallowed). CONT, not LISTEN: a listening tracee never dequeues
+                     * the signals still to be swallowed, and PTRACE_DETACH re-arms a
+                     * group-stop anyway, so the process ends up stopped either way. */
+                    s = 0;
                 } else if (swallow & SIGBIT(s)) {
                     note_swallowed(out, z->pid, s);
                     swallow &= ~SIGBIT(s);
@@ -192,7 +218,7 @@ static void thaw_ptrace(struct frozen *z, uint64_t swallow, struct sbuf *out)
             if (!live[i])
                 continue;
             if (ptrace(PTRACE_INTERRUPT, z->tids[i], NULL, NULL) < 0 ||
-                wait_ptrace_stop(z->tids[i], &z->inject[i]) < 0) {
+                wait_ptrace_stop(z->pid, z->tids[i], &z->inject[i]) < 0) {
                 live[i] = false;
                 continue;
             }
@@ -310,6 +336,16 @@ static void plan_line(struct sbuf *out, const char *verb, const struct plan_fd *
 
 /* ---- the cutover -------------------------------------------------------- */
 
+/* true while the process the pidfd was opened on still exists and isn't a
+ * zombie; once it's gone, its PID may already belong to someone else */
+static bool pinned_alive(int pidfd, pid_t pid)
+{
+    if (pidfd_signal_(pidfd, 0) < 0)
+        return false;
+    char st = proc_state(pid);
+    return st != 0 && st != 'Z';
+}
+
 static int index_of(const pid_t *v, int n, pid_t pid)
 {
     for (int i = 0; i < n; i++)
@@ -322,7 +358,8 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
 {
     pid_t self = getpid();
     pid_t v[MAX_PIDS], op[MAX_PIDS];
-    int nv = 0;
+    int tfd[MAX_PIDS]; /* pidfds pinning each target, opened before anything reads /proc */
+    int nv = 0, ntfd = 0, rc = 1;
 
     /* 0. collect and validate targets */
     if (o->from) {
@@ -352,37 +389,47 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
 
     int keep = 0;
     for (int i = 0; i < nv; i++) {
-        pid_t pid = v[i], pp = proc_ppid(pid);
+        pid_t pid = v[i];
         if (pid == self) {
             sb_printf(out, "cutover: %d is focker itself\n", pid);
-            return 1;
+            goto done;
         }
-        if (pp < 0) {
+        int fd = pidfd_open_(pid);
+        if (fd < 0) {
             sb_printf(out, "cutover: no such process %d\n", pid);
-            return 1;
+            goto done;
+        }
+        tfd[ntfd++] = fd;
+        pid_t pp = proc_ppid(pid);
+        if (pp < 0 || !pinned_alive(fd, pid)) {
+            sb_printf(out, "cutover: no such process %d\n", pid);
+            goto done;
         }
         if (pp == self) {
             sb_printf(out, "cutover: %d is already a child of focker, skipping\n", pid);
+            close(tfd[--ntfd]);
             continue;
         }
         if (!proc_is_descendant(pid, self)) {
             sb_printf(out, "cutover: %d is not in family %s (focker can only adopt its own descendants;"
                            " start the old parent with 'focker run')\n", pid, f->name);
-            return 1;
+            goto done;
         }
         v[keep] = pid;
         op[keep] = pp;
         keep++;
     }
     nv = keep;
-    if (nv == 0)
-        return 0;
+    if (nv == 0) {
+        rc = 0;
+        goto done;
+    }
     for (int i = 0; i < nv; i++) {
         int j = index_of(v, nv, op[i]);
         if (j >= 0) {
             sb_printf(out, "cutover: %d is both a target and the parent of %d; cut over one generation at a time\n",
                       v[j], v[i]);
-            return 1;
+            goto done;
         }
     }
 
@@ -431,10 +478,15 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
                 sb_printf(out, "plan: wait for old parent %d to exit\n", parents[k]);
         }
         sb_printf(out, "plan: freeze=%s, timeout=%.1fs\n", freeze_name(o->freeze), o->timeout_ms / 1000.0);
-        return 0;
+        rc = 0;
+        goto done;
     }
 
-    int rc = 1;
+    /* test-only: widen the window between validation and freeze */
+    const char *stall = getenv("FOCKER_TEST_STALL_MS");
+    if (stall)
+        sleep_ms(atol(stall));
+
     int stolen_base = f->nstolen;
     int pidfds[MAX_PIDS];
     for (int k = 0; k < nparents; k++)
@@ -442,15 +494,24 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
     struct frozen *z = calloc((size_t)nv, sizeof *z);
     if (!z) {
         sb_printf(out, "cutover: out of memory\n");
-        return 1;
+        goto done;
     }
 
-    /* 1. freeze */
+    /* 1. freeze. The pidfd check after each step proves the process that
+     * was validated and the one that got frozen are the same, not a reuse. */
     for (int i = 0; i < nv; i++) {
         z[i].pid = v[i];
+        if (!pinned_alive(tfd[i], v[i])) {
+            sb_printf(out, "cutover: %d exited before it could be frozen\n", v[i]);
+            goto rollback;
+        }
         z[i].pending_before = proc_sigpending(v[i]);
         if (freeze(&z[i], o->freeze, out) < 0)
             goto rollback;
+        if (!pinned_alive(tfd[i], v[i])) {
+            sb_printf(out, "cutover: %d exited before it could be frozen\n", v[i]);
+            goto rollback;
+        }
         if (o->freeze == FREEZE_PTRACE)
             sb_printf(out, "cutover: froze %d (%s, %d thread%s, ptrace)\n", v[i], cmd_of(v[i]), z[i].ntids,
                       z[i].ntids == 1 ? "" : "s");
@@ -563,13 +624,22 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
     for (int i = 0; i < nv; i++) {
         if (!z[i].frozen)
             continue;
-        uint64_t fresh = (proc_sigpending(v[i]) & ~z[i].pending_before) & ~BENIGN;
-        if (o->freeze == FREEZE_SIGNAL)
-            for (int s = 1; s < 64; s++)
-                if (fresh & SIGBIT(s) && s != SIGSTOP)
-                    sb_printf(out, "cutover: warning: %s reached %d while it was stopped and will be delivered"
-                                   " now (--freeze ptrace would swallow it)\n", signame(s), v[i]);
-        thaw(&z[i], o->freeze, o->suppress ? fresh : 0, out);
+        uint64_t now = proc_sigpending(v[i]);
+        uint64_t fresh = (now & ~z[i].pending_before) & ~BENIGN;
+        /* standard signals don't queue: a copy sent while one was pending was merged into it */
+        uint64_t stale = now & z[i].pending_before & ~BENIGN;
+        for (int s = 1; s < 64; s++) {
+            if (stale & SIGBIT(s))
+                sb_printf(out, "cutover: %s was already pending for %d before the freeze; a copy sent during the"
+                               " cutover can't be told apart from it and was not swallowed\n", signame(s), v[i]);
+            if (o->freeze == FREEZE_PTRACE && fresh & JOBCTL & SIGBIT(s))
+                sb_printf(out, "cutover: %s reached %d during the cutover; it was kept, so %d will stop\n",
+                          signame(s), v[i], v[i]);
+            if (o->freeze == FREEZE_SIGNAL && fresh & SIGBIT(s) && s != SIGSTOP)
+                sb_printf(out, "cutover: warning: %s reached %d while it was stopped and will be delivered"
+                               " now (--freeze ptrace would swallow it)\n", signame(s), v[i]);
+        }
+        thaw(&z[i], o->freeze, o->suppress ? fresh & ~JOBCTL : 0, out);
         sb_printf(out, "cutover: thawed %d\n", v[i]);
     }
 
@@ -605,5 +675,8 @@ out:
         if (pidfds[k] >= 0)
             close(pidfds[k]);
     free(z);
+done:
+    for (int i = 0; i < ntfd; i++)
+        close(tfd[i]);
     return rc;
 }

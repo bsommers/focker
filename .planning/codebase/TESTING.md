@@ -27,17 +27,17 @@ last_mapped_at: 2026-10-20T03:34:23Z
 ## Fixtures
 
 The `examples/` programs are the fixtures:
-- `ticker` (pdeathsig with `-d`, extra threads with `-t`)
+- `ticker` (pdeathsig with `-d`, extra threads with `-t`, exit-on-signal with `-x`, a blocked pending signal with `-b`)
 - `oldparent` (pipes, or socketpairs with `-s`)
 - `newparent` (handover target)
 
 Shell one-liners model specific parent behaviors: a parent that ignores TERM, one that kills its child on TERM, and nested parents.
 
-## Coverage (71 checks)
+## Coverage (81 checks)
 
 - CLI contract: usage errors exit 2, runtime errors exit 1, every `--help` succeeds, bad names, signals, timeouts and `FOCKER_FREEZE`.
 - run: foreground exit status passthrough, 127 for a missing program, duplicate names, rm.
-- cutover: dry run changes nothing; pipe takeover and drain; bystanders; tree annotations; socketpair peer takeover; a 5-thread freeze; pdeathsig swallowed with ptrace and fatal with signal; shutdown-kill swallowed; timeout rollback; KILL escalation; outsider and self refused; the target/parent conflict; grandchild generation-skip; `--from`.
+- cutover: dry run changes nothing; pipe takeover and drain; bystanders; tree annotations; socketpair peer takeover; a 5-thread freeze; pdeathsig swallowed with ptrace and fatal with signal; shutdown-kill swallowed; timeout rollback; KILL escalation; outsider and self refused; the target/parent conflict; grandchild generation-skip; `--from`; a target dying during thaw keeps its exit status; a SIGSTOP during the cutover is kept; a target dying before the freeze is caught by its pidfd (via the test-only `FOCKER_TEST_STALL_MS`); an already-pending signal is reported.
 - handover: PID kept, program replaced, `FOCKER_FDS` delivered, the new parent relays and reaps, and `ps -a` records it.
 
 ## Gaps

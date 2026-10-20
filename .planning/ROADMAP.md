@@ -18,7 +18,7 @@ There are no new user-facing features.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Cutover correctness** - Fix tracee reaping, group-stop preservation, pidfd-first validation, re-sent signal reporting
+- [x] **Phase 1: Cutover correctness** - Fix tracee reaping, group-stop preservation, pidfd-first validation, re-sent signal reporting
 - [ ] **Phase 2: Test coverage** - Cover every untested path in TESTING.md, add parser unit tests
 - [ ] **Phase 3: Sanitizers and CI** - ASan/UBSan and analyzer builds, CI running the suite
 - [ ] **Phase 4: Efficiency** - Cheaper child enumeration, measured idle cost, documented limits
@@ -34,7 +34,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. If a target is SIGSTOP'd during the cutover, it is still stopped (`T`) after thaw
   3. Cutover targets are held by pidfd from validation onwards, and a test shows that a vanished target is reported, not mistaken for another process
   4. A re-sent, already-pending signal shows up in the transcript
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [x] 01-01-PLAN.md — REL-01..04 fixes with regression tests
 
 ### Phase 2: Test coverage
 **Goal**: Every gap listed in .planning/codebase/TESTING.md has a test
@@ -73,7 +76,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Cutover correctness | 0/TBD | Not started | - |
+| 1. Cutover correctness | 1/1 | Complete | 2026-10-20 |
 | 2. Test coverage | 0/TBD | Not started | - |
 | 3. Sanitizers and CI | 0/TBD | Not started | - |
 | 4. Efficiency | 0/TBD | Not started | - |

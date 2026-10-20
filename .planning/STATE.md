@@ -3,10 +3,10 @@ gsd_state_version: '1.0'
 status: planning
 progress:
   total_phases: 4
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
+  percent: 25
 ---
 
 # Project State
@@ -16,21 +16,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-20)
 
 **Core value:** A cutover must never leave a child worse off. Either the child ends up adopted, running, with its I/O intact, or everything rolls back and it stays exactly where it was.
-**Current focus:** Phase 1: Cutover correctness
+**Current focus:** Phase 2: Test coverage
 
 ## Current Position
 
-Phase: 1 of 4 (Cutover correctness)
+Phase: 2 of 4 (Test coverage)
 Plan: 0 of TBD in current phase
 Status: Ready to plan
-Last activity: 2026-10-20 — Brownfield onboarding complete (codebase map, project, requirements, roadmap)
+Last activity: 2026-10-20 — Phase 1 complete (REL-01..04, 81 checks passing)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██▌░░░░░░░] 25%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
+- Total plans completed: 1
 - Average duration: -
 - Total execution time: 0 hours
 
@@ -38,7 +38,7 @@ Progress: [░░░░░░░░░░] 0%
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 1 | 1 | 1 | 1 |
 
 *Updated after each plan completion*
 
@@ -50,6 +50,8 @@ Decisions are logged in the PROJECT.md Key Decisions table.
 
 - [Onboarding]: First milestone is Hardening (user choice). The async supervisor, more fd kinds and CRIU are deferred to v2.
 - [Onboarding]: GSD artifacts were written by hand. GSD Core is not installed for Claude Code (user choice: artifacts only).
+- [Phase 1]: Keep PTRACE_CONT for group-stops in the swallow loop. PTRACE_LISTEN blocks swallowing of still-pending signals, and PTRACE_DETACH re-arms the stop anyway.
+- [Phase 1]: `FOCKER_TEST_STALL_MS` is a test-only hook in cutover.c (sleep between validation and freeze).
 
 ### Pending Todos
 
@@ -68,5 +70,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-10-20
-Stopped at: Onboarding complete; next is planning Phase 1
+Stopped at: Phase 1 complete; next is planning Phase 2
 Resume file: None

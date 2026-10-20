@@ -75,7 +75,7 @@ Rules and behavior:
 - A PID can't be both a target and the parent of another target. Cut over one generation at a time.
 - Grandchildren work. Cutting over a grandchild kills *its* parent, and the kernel sends the grandchild straight to focker, skipping the generations in between (unless one of them is itself a subreaper, which is reported).
 - **Bystanders:** when the old parent dies, *all* of its children are orphaned. Children you didn't name are adopted too and reported as `also adopted`, but they are not frozen and their fds are not taken over. Use `--from PPID` to include them.
-- Swallowed signals: with `--freeze ptrace`, any signal that becomes pending for a target between freeze and thaw is dropped, except `SIGCHLD`, `SIGCONT`, `SIGWINCH` and `SIGURG`. Each one is reported as `swallowed SIGx`. `SIGKILL` cannot be intercepted.
+- Swallowed signals: with `--freeze ptrace`, any signal that becomes pending for a target between freeze and thaw is dropped, except `SIGCHLD`, `SIGCONT`, `SIGWINCH` and `SIGURG`. Each one is reported as `swallowed SIGx`. `SIGKILL` cannot be intercepted. Job-control stops (`SIGSTOP`, `SIGTSTP`, `SIGTTIN`, `SIGTTOU`) are kept, so a target stopped during the cutover is still stopped afterwards. A signal that was already pending before the freeze is reported but not swallowed: the kernel merges a second copy into it, so a re-send can't be detected.
 - On timeout or freeze failure, the cutover rolls back: fds it took are closed, the targets are thawed, and they stay where they were. Exit 1.
 
 The transcript lines are stable and greppable:
@@ -86,6 +86,9 @@ cutover: took over KIND fd N of OLDPID (child PID fd N), draining its output to 
 cutover: sent SIG to old parent OLDPID
 cutover: adopted PID (ppid OLD -> NEW) in N ms
 cutover: swallowed SIGx sent to PID during the cutover
+cutover: SIGx reached PID during the cutover; it was kept, so PID will stop
+cutover: SIGx was already pending for PID before the freeze; a copy sent during the cutover can't be told apart from it and was not swallowed
+cutover: PID exited before it could be frozen
 cutover: thawed PID
 cutover: also adopted PID (CMD), orphaned by the same exit
 ```

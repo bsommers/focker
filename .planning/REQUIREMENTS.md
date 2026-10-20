@@ -9,10 +9,10 @@ Milestone v1.0, Hardening. Each requirement maps to a roadmap phase.
 
 ### Reliability
 
-- [ ] **REL-01**: A target that dies while ptrace-attached during a cutover still has its exit status recorded in `focker inspect` (thaw must not silently reap it)
-- [ ] **REL-02**: A job-control stop that arrives for a target during the cutover is preserved after thaw (PTRACE_LISTEN), not overridden by PTRACE_CONT
-- [ ] **REL-03**: Cutover targets are pinned with a pidfd before validation, so a recycled PID can't be frozen or adopted by mistake
-- [ ] **REL-04**: A signal that was already pending before the freeze and is re-sent during the cutover is reported in the transcript, not silently left to coalesce
+- [x] **REL-01**: A target that dies while ptrace-attached during a cutover still has its exit status recorded in `focker inspect` (thaw must not silently reap it)
+- [x] **REL-02**: A job-control stop that arrives for a target during the cutover is preserved after thaw (not swallowed; PTRACE_CONT kept, since PTRACE_LISTEN would block swallowing)
+- [x] **REL-03**: Cutover targets are pinned with a pidfd before validation, so a recycled PID can't be frozen or adopted by mistake
+- [x] **REL-04**: A signal that was already pending before the freeze and is re-sent during the cutover is reported in the transcript, not silently left to coalesce
 
 ### Testing
 
@@ -64,10 +64,10 @@ Deferred and tracked, but not in the current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REL-01 | Phase 1 | Pending |
-| REL-02 | Phase 1 | Pending |
-| REL-03 | Phase 1 | Pending |
-| REL-04 | Phase 1 | Pending |
+| REL-01 | Phase 1 | Complete |
+| REL-02 | Phase 1 | Complete |
+| REL-03 | Phase 1 | Complete |
+| REL-04 | Phase 1 | Complete |
 | TST-01 | Phase 2 | Pending |
 | TST-02 | Phase 2 | Pending |
 | TST-03 | Phase 2 | Pending |

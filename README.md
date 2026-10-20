@@ -37,7 +37,7 @@ Needs Linux 5.6+ (`pidfd_getfd`), a C11 compiler and glibc 2.32+. There are no o
 
 ```sh
 make            # builds build/focker and the example programs
-make test       # 71 integration tests (real processes, no root needed)
+make test       # 81 integration tests (real processes, no root needed)
 make demo       # narrated run → cutover → handover walkthrough
 sudo make install   # optional: /usr/local/bin/focker (PREFIX=... to change)
 ```

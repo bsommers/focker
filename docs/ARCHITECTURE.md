@@ -35,7 +35,7 @@ From 1 and 2: to give a child a new parent, the new parent must be an ancestor s
 | `src/main.c` | 569 | argument parsing, help text, `run` (including detaching) |
 | `src/client.c` | 381 | control-socket client, `ps`, `tree`, `logs`, `rm`, `freeze`/`thaw` |
 | `src/supervisor.c` | 642 | subreaper loop, member table, drains, request dispatch, handover |
-| `src/cutover.c` | 609 | the cutover state machine |
+| `src/cutover.c` | 682 | the cutover state machine |
 | `src/procfs.c` | 266 | `/proc` readers |
 | `src/unixdiag.c` | 100 | unix socket peer lookup |
 | `src/util.c` | 203 | shared helpers |
@@ -58,7 +58,7 @@ In detached mode (`-d`), the CLI forks. The child calls `setsid()` and becomes t
 ```mermaid
 stateDiagram-v2
   [*] --> Validate
-  Validate --> Plan: targets are descendants, not focker, not each other's parents
+  Validate --> Plan: pinned by pidfd; descendants, not focker, not each other's parents
   Plan --> [*]: --dry-run
   Plan --> Freeze
   Freeze --> TakeFds: every thread stopped
@@ -75,7 +75,8 @@ stateDiagram-v2
 
 ### 4.1 Validate and plan
 
-- Targets are the named PIDs plus the children of `--from`. Each must be a strict descendant of the supervisor (walk `PPid:` up). Direct children are skipped.
+- Targets are the named PIDs plus the children of `--from`. Each is pinned with `pidfd_open` *before* anything reads its `/proc` entries, and must be a strict descendant of the supervisor (walk `PPid:` up). Direct children are skipped.
+- Right before and right after each freeze, `pidfd_send_signal(fd, 0)` must still succeed and the process must not be a zombie. Otherwise the validated process is gone and its PID could already belong to someone else, so the cutover rolls back with `N exited before it could be frozen`.
 - Old parents are read from `PPid:`. Bystanders are the old parents' other children.
 - **fd plan:** for each target T with old parent P, compare `/proc/P/fd` and `/proc/T/fd`:
   - **pipes:** the same `pipe:[ino]` with *opposite* access modes (from `/proc/PID/fdinfo/N` `flags:`). That is P's end of a pipe whose other end T holds. If both hold the same end, it's an inherited duplicate, and closing P's copy changes nothing, so it's skipped.
@@ -90,6 +91,8 @@ stateDiagram-v2
 
 The pending-signal set (`ShdPnd` | every thread's `SigPnd`) is snapshotted *before* the freeze.
 
+Every ptrace wait first peeks with `waitid(WNOWAIT)`. If the thread-group leader has exited and is already focker's child (adopted), its zombie is left alone, so the supervisor's reaper records its exit status, logs it and releases its held fds. Exits focker sees only as the tracer are reaped as before, because the real parent can't reap a traced zombie until the tracer has.
+
 ### 4.3 Take fds, cut ties, wait
 
 `pidfd_open(P)`, then `pidfd_getfd(P, fd)` for each planned fd. The new fd is `O_CLOEXEC` and shares the open file description, so the pipe now has a second holder. Then `pidfd_send_signal(P, SIG)`, which can't hit a recycled PID. Then the cutover polls the P pidfds (they become readable on exit) and re-reads each target's `PPid:` every ≤20 ms until none of them points at P any more.
@@ -101,7 +104,11 @@ For each target:
 - If it is gone or a zombie, it died during the cutover. In practice that means `PR_SET_PDEATHSIG=SIGKILL`, which cannot be intercepted.
 - If it has some other parent, a subreaper sits between focker and the old parent.
 
-**Swallowing**, with ptrace only: `fresh = pending_now & ~pending_before & ~{CHLD,CONT,WINCH,URG}`. If `fresh` is non-empty, every thread gets `PTRACE_CONT(0)`, and focker loops on `waitpid(tid, __WALL|WNOHANG)` for up to 250 ms. Each signal-delivery-stop for a signal in `fresh` is continued with 0, which drops it. Any other signal is passed through. Then the threads are interrupted again and detached (`PTRACE_DETACH` needs a stopped tracee). A signal the process has blocked stays pending, and it is reported, not swallowed.
+**Swallowing**, with ptrace only: `fresh = pending_now & ~pending_before & ~{CHLD,CONT,WINCH,URG}`, minus the job-control stops (`STOP`, `TSTP`, `TTIN`, `TTOU`), which are reported as kept. If `fresh` is non-empty, every thread gets `PTRACE_CONT(0)`, and focker loops on non-blocking waits for up to 250 ms. Each signal-delivery-stop for a signal in `fresh` is continued with 0, which drops it. Any other signal is passed through. Then the threads are interrupted again and detached (`PTRACE_DETACH` needs a stopped tracee). A signal the process has blocked stays pending, and it is reported, not swallowed.
+
+A group-stop seen in the loop (a kept `SIGSTOP`) is continued with `PTRACE_CONT`, not `PTRACE_LISTEN`. A listening tracee never dequeues the signals that still have to be swallowed, so they would be delivered on the next `SIGCONT`. `PTRACE_DETACH` re-arms a group-stop that is in effect, so the process ends up stopped either way.
+
+Signals in `pending_now & pending_before` are reported as already pending. A standard signal doesn't queue, so a copy sent during the cutover merged into the pending one and can't be detected or swallowed.
 
 What this catches:
 - `PR_SET_PDEATHSIG` with any signal except `SIGKILL`. The kernel sends it to the child as part of the reparent.
@@ -148,4 +155,4 @@ Then `execve`. If it fails, everything is rebuilt and the family stays with fock
 
 ## 7. Testing
 
-`tests/run.sh` runs 71 checks against real processes in a private `FOCKER_RUNTIME_DIR`, covering the CLI contract, run/rm, pipe and socketpair cutovers, multithreaded freezing, pdeathsig under both freeze methods, shutdown-kill swallowing, timeout rollback, grandchildren, `--from`, and handover with fd inheritance and reaping. The example programs in `examples/` are the test fixtures.
+`tests/run.sh` runs 81 checks against real processes in a private `FOCKER_RUNTIME_DIR`, covering the CLI contract, run/rm, pipe and socketpair cutovers, multithreaded freezing, pdeathsig under both freeze methods, shutdown-kill swallowing, timeout rollback, grandchildren, `--from`, the cutover edge cases (a target dying during thaw, a SIGSTOP during the cutover, a target dying before the freeze, an already-pending signal), and handover with fd inheritance and reaping. The example programs in `examples/` are the test fixtures.

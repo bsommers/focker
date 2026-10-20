@@ -179,6 +179,54 @@ expect_rc "freeze refuses outsiders"              1 "$F" freeze from $$
 stop_family from
 check "family exits once empty" test ! -S "$FOCKER_RUNTIME_DIR/from/control.sock"
 
+echo "cutover edge cases"
+start_linger() { # like start, but the family outlives its last child so inspect still answers
+    local name=$1; shift
+    "$F" run -d --linger -n "$name" -- "$@" >/dev/null || return 1
+    local sup; sup=$(sup_of "$name")
+    wait_for test -n "$(kids_of "$sup")" && wait_for test -n "$(kids_of "$(kids_of "$sup" | head -1)")"
+}
+# REL-01: URG (23) is passed through before VTALRM (26) is swallowed, and -x 23 makes it fatal,
+# so the ticker exits inside the swallow loop while still traced.
+start_linger dies sh -c "$B/ticker -i 50 -d 26 -x 23 >/dev/null & trap 'kill -URG \$!; exit' TERM; wait"
+T=$(ticker_of dies)
+"$F" cutover dies "$T" >/dev/null 2>&1
+check "a target that dies during thaw keeps its exit status" \
+    wait_for bash -c "'$F' inspect dies | grep -q '^  $T .*exited 7'"
+stop_family dies
+
+# REL-02: the old parent stops its child on the way out; the stop must survive the thaw.
+# The pdeathsig (26) makes the swallow loop run, so the group-stop is seen under trace.
+start stopme sh -c "$B/ticker -i 50 -d 26 >/dev/null & trap 'kill -STOP \$!; exit' TERM; wait"
+T=$(ticker_of stopme)
+out=$("$F" cutover stopme "$T")
+check "the swallow loop ran" grep -q "swallowed SIGVTALRM" <<<"$out"
+check "a SIGSTOP sent during the cutover is kept" grep -q "SIGSTOP reached $T during the cutover; it was kept" <<<"$out"
+check "the target stays stopped after the thaw" wait_for bash -c "test \"\$(ps -o stat= -p $T | cut -c1)\" = T"
+kill -CONT "$T"
+check "the stopped target resumes on SIGCONT" \
+    wait_for bash -c "s=\$(ps -o stat= -p $T | cut -c1); test -n \"\$s\" -a \"\$s\" != T -a \"\$s\" != Z"
+stop_family stopme
+
+# REL-03: the target dies between validation and freeze (held open by the test-only stall)
+FOCKER_TEST_STALL_MS=600 start pin sh -c "$B/ticker -i 50 >/dev/null & wait; sleep 30"
+OLD=$(old_of pin) T=$(ticker_of pin)
+"$F" cutover pin "$T" >"$FOCKER_RUNTIME_DIR/pin.out" 2>&1 & cpid=$!
+sleep 0.2; kill -KILL "$T"
+wait "$cpid"; rc=$?
+check "a target that dies before the freeze fails the cutover" test $rc -eq 1
+check "the pidfd notices the target died" grep -q "$T exited before it could be frozen" "$FOCKER_RUNTIME_DIR/pin.out"
+check "the old parent is left alone" alive "$OLD"
+stop_family pin
+
+# REL-04: SIGUSR1 is blocked and pending in the ticker, and the old parent sends another on exit
+start pend sh -c "$B/ticker -i 50 -b 10 >/dev/null & trap 'kill -USR1 \$!; exit' TERM; wait"
+T=$(ticker_of pend)
+out=$("$F" cutover pend "$T")
+check "an already-pending signal is reported" grep -q "SIGUSR1 was already pending for $T" <<<"$out"
+check "the target with a pending signal survives" alive "$T"
+stop_family pend
+
 echo
 echo "$pass passed, $fail failed"
 for t in "${failed[@]}"; do echo "  failed: $t"; done
