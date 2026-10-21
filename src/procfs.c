@@ -123,23 +123,73 @@ int proc_cmdline(pid_t pid, char *buf, size_t len)
     return 0;
 }
 
-int proc_children(pid_t parent, pid_t *out, int max)
+bool proc_children_scan_only;
+
+#define CHILDREN_CAP 4096 /* children collected before sorting; far above any focker limit */
+
+/* /proc/PID/task/TID/children lists the children each thread forked. Their
+ * union is the process's children. Returns -1 if no thread has the file
+ * (kernel without CONFIG_PROC_CHILDREN, or the process is gone). */
+static int children_fast(pid_t parent, pid_t *buf, int cap)
+{
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s/%d/task", proc_root, parent);
+    DIR *d = opendir(path);
+    if (!d)
+        return -1;
+    int n = 0;
+    bool any = false;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (!numeric(e->d_name))
+            continue;
+        char file[PATH_MAX + 288], list[4096]; /* path + a 255-byte name + "/children" */
+        snprintf(file, sizeof file, "%s/%s/children", path, e->d_name);
+        if (read_small(file, list, sizeof list) < 0)
+            continue; /* the thread exited, or no such file on this kernel */
+        any = true;
+        for (char *p = list, *end; n < cap; p = end) {
+            long v = strtol(p, &end, 10);
+            if (end == p)
+                break;
+            buf[n++] = (pid_t)v;
+        }
+    }
+    closedir(d);
+    return any ? n : -1;
+}
+
+static int children_scan(pid_t parent, pid_t *buf, int cap)
 {
     DIR *d = opendir(proc_root);
     if (!d)
         return -1;
     int n = 0;
     struct dirent *e;
-    while ((e = readdir(d)) && n < max) {
+    while ((e = readdir(d)) && n < cap) {
         if (!numeric(e->d_name))
             continue;
         pid_t pid = (pid_t)atoi(e->d_name);
         if (proc_ppid(pid) == parent)
-            out[n++] = pid;
+            buf[n++] = pid;
     }
     closedir(d);
-    qsort(out, (size_t)n, sizeof *out, cmp_pid);
     return n;
+}
+
+/* The lowest `max` children, sorted, without duplicates. */
+int proc_children(pid_t parent, pid_t *out, int max)
+{
+    static pid_t buf[CHILDREN_CAP];
+    int n = proc_children_scan_only ? -1 : children_fast(parent, buf, CHILDREN_CAP);
+    if (n < 0 && (n = children_scan(parent, buf, CHILDREN_CAP)) < 0)
+        return -1;
+    qsort(buf, (size_t)n, sizeof *buf, cmp_pid);
+    int k = 0;
+    for (int i = 0; i < n && k < max; i++)
+        if (k == 0 || buf[i] != out[k - 1])
+            out[k++] = buf[i];
+    return k;
 }
 
 int proc_list(struct procent **out)

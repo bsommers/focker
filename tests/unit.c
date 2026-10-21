@@ -11,6 +11,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static int pass, fail;
@@ -68,6 +69,9 @@ static void build_fixture(void)
     PUT("100/cmdline", "prog\0-x\0two words\0");
     PUT("100/task/100/status", "Name:\tparent\nSigPnd:\t0000000000000200\n");
     PUT("100/task/101/status", "Name:\tworker\nSigPnd:\t0000000000004000\n");
+    /* children forked by two threads; 102 is listed twice, as a reparent between reads can do */
+    PUT("100/task/100/children", "102 101 ");
+    PUT("100/task/101/children", "103 102 ");
     PUT("101/status", "Name:\tzomb\nState:\tZ (zombie)\nPPid:\t100\n");
     PUT("101/cmdline", "");
     PUT("101/comm", "zomb\n");
@@ -134,6 +138,60 @@ static void test_tree(void)
     CHECK("sigpending of a missing pid is empty", proc_sigpending(999) == 0);
 }
 
+static void children_both(pid_t pid, int max, pid_t *fast, int *nfast, pid_t *scan, int *nscan)
+{
+    proc_children_scan_only = false;
+    *nfast = proc_children(pid, fast, max);
+    proc_children_scan_only = true;
+    *nscan = proc_children(pid, scan, max);
+    proc_children_scan_only = false;
+}
+
+static void test_children_both_ways(void)
+{
+    pid_t f[8], s[8];
+    int nf, ns;
+    puts("children: task/*/children vs full scan");
+    children_both(100, 8, f, &nf, s, &ns);
+    CHECK("fast path merges every thread's list, sorted and deduped",
+          nf == 3 && f[0] == 101 && f[1] == 102 && f[2] == 103);
+    CHECK("fast path matches the scan", nf == ns && memcmp(f, s, sizeof f[0] * (size_t)nf) == 0);
+    PUT("100/task/101/children", "");
+    PUT("100/task/100/children", "101 ");
+    children_both(100, 8, f, &nf, s, &ns);
+    CHECK("the fast path is really used", nf == 1 && f[0] == 101 && ns == 3);
+    PUT("100/task/100/children", "102 101 ");
+    PUT("100/task/101/children", "103 102 ");
+    children_both(103, 8, f, &nf, s, &ns);
+    CHECK("no task/*/children falls back to the scan", nf == 1 && f[0] == 104 && ns == 1);
+    children_both(100, 2, f, &nf, s, &ns);
+    CHECK("both modes cap at max with the lowest pids", nf == 2 && f[0] == 101 && f[1] == 102 && ns == 2 &&
+                                                            s[0] == 101 && s[1] == 102);
+    children_both(999, 8, f, &nf, s, &ns);
+    CHECK("a missing parent has no children either way", nf == 0 && ns == 0);
+
+    proc_root = "/proc";
+    pid_t kids[3];
+    for (int i = 0; i < 3; i++)
+        if ((kids[i] = fork()) == 0) {
+            pause();
+            _exit(0);
+        }
+    pid_t lf[64], ls[64];
+    children_both(getpid(), 64, lf, &nf, ls, &ns);
+    int found = 0;
+    for (int i = 0; i < nf; i++)
+        for (int k = 0; k < 3; k++)
+            found += lf[i] == kids[k];
+    CHECK("live: the fast path finds our children", nf == 3 && found == 3);
+    CHECK("live: fast path matches the scan", nf == ns && memcmp(lf, ls, sizeof lf[0] * (size_t)nf) == 0);
+    for (int i = 0; i < 3; i++) {
+        kill(kids[i], SIGKILL);
+        waitpid(kids[i], NULL, 0);
+    }
+    proc_root = root;
+}
+
 static void test_fds(void)
 {
     struct fdent fe[8];
@@ -196,6 +254,7 @@ int main(void)
     test_status();
     test_cmdline();
     test_tree();
+    test_children_both_ways();
     test_fds();
     test_live();
     char cmd[PATH_MAX + 16];

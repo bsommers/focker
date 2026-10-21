@@ -46,6 +46,7 @@ int  pidfd_signal_(int pidfd, int sig);
 
 /* procfs.c */
 extern const char *proc_root;                         /* "/proc"; unit tests point it at a fixture tree */
+extern bool proc_children_scan_only;                  /* tests: skip the per-thread children files, always scan */
 struct procent { pid_t pid, ppid; };
 struct fdent { int fd; char kind; unsigned long ino; int accmode; }; /* kind: 'p' pipe, 's' socket, 'o' other */
 pid_t    proc_ppid(pid_t pid);                        /* -1 if gone */
