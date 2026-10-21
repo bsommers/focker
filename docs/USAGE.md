@@ -132,10 +132,15 @@ Data focker drained before the handover is in `adopted-CHILD-fdN.log`, so CMD se
 ## focker ps
 
 ```
-focker ps [-a]
+focker ps [-a] [--json]
 ```
 
 Lists running families, sorted by name: `NAME PID STATUS CHILDREN COMMAND`. `-a` adds exited ones, with their exit record (`exited 0`, `killed by SIGTERM`, `handed over to ...`).
+
+`--json` prints `{"families": [...]}`, with one object per family in the same order and with the same `-a` filter:
+`{"name": "fam", "pid": 4200, "running": true, "status": "running", "children": 2, "cmd": "./runner"}`. For a
+family that isn't running, `running` is false, `status` is its exit record (or `gone (no exit record)`),
+`children` is null, and `pid` is the last supervisor PID or null.
 
 ## focker tree / inspect
 

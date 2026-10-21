@@ -130,7 +130,7 @@ static int cmp_str(const void *a, const void *b)
     return strcmp(*(char *const *)a, *(char *const *)b);
 }
 
-int cmd_ps(bool all)
+int cmd_ps(bool all, bool json)
 {
     char rt[PATH_MAX];
     if (runtime_dir(rt, sizeof rt) < 0) {
@@ -151,23 +151,58 @@ int cmd_ps(bool all)
     closedir(d);
     qsort(names, (size_t)n, sizeof *names, cmp_str);
 
-    printf("%-24s %-8s %-18s %-9s %s\n", "NAME", "PID", "STATUS", "CHILDREN", "COMMAND");
+    /* JSON is built whole and printed at the end, so it is one document even if
+     * a family goes away halfway through the listing */
+    struct sbuf js = { 0 };
+    int shown = 0;
+    if (json)
+        sb_printf(&js, "{\"families\":[");
+    else
+        printf("%-24s %-8s %-18s %-9s %s\n", "NAME", "PID", "STATUS", "CHILDREN", "COMMAND");
     for (int i = 0; i < n; i++) {
         pid_t pid;
         int kids;
         char cmd[256];
         if (client_info(names[i], &pid, &kids, cmd, sizeof cmd) == 0) {
-            printf("%-24s %-8d %-18s %-9d %s\n", names[i], pid, "running", kids, cmd);
+            if (json) {
+                sb_printf(&js, "%s{\"name\":", shown++ ? "," : "");
+                sb_json_str(&js, names[i]);
+                sb_printf(&js, ",\"pid\":%d,\"running\":true,\"status\":\"running\",\"children\":%d,\"cmd\":",
+                          pid, kids);
+                sb_json_str(&js, cmd);
+                sb_printf(&js, "}");
+            } else {
+                printf("%-24s %-8d %-18s %-9d %s\n", names[i], pid, "running", kids, cmd);
+            }
         } else if (all) {
             char dir[PATH_MAX], status[PATH_MAX + 32], pidtxt[32];
             family_dir(names[i], dir, sizeof dir);
             read_leaf(dir, "cmd", cmd, sizeof cmd);
             read_leaf(dir, "pid", pidtxt, sizeof pidtxt);
             read_leaf(dir, "exit", status, sizeof status);
-            printf("%-24s %-8s %-18s %-9s %s\n", names[i], pidtxt[0] ? pidtxt : "-",
-                   status[0] ? status : "gone (no exit record)", "-", cmd);
+            const char *st = status[0] ? status : "gone (no exit record)";
+            if (json) {
+                sb_printf(&js, "%s{\"name\":", shown++ ? "," : "");
+                sb_json_str(&js, names[i]);
+                if (pidtxt[0])
+                    sb_printf(&js, ",\"pid\":%d", atoi(pidtxt));
+                else
+                    sb_printf(&js, ",\"pid\":null");
+                sb_printf(&js, ",\"running\":false,\"status\":");
+                sb_json_str(&js, st);
+                sb_printf(&js, ",\"children\":null,\"cmd\":");
+                sb_json_str(&js, cmd);
+                sb_printf(&js, "}");
+            } else {
+                printf("%-24s %-8s %-18s %-9s %s\n", names[i], pidtxt[0] ? pidtxt : "-", st, "-", cmd);
+            }
         }
         free(names[i]);
+    }
+    if (json) {
+        sb_printf(&js, "]}\n");
+        fputs(js.p, stdout);
+        sb_free(&js);
     }
     return FK_OK;
 }

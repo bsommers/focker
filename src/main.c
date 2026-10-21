@@ -96,9 +96,10 @@ static const char *HANDOVER_USAGE =
     "  focker handover demo -- ./build/newparent\n";
 
 static const char *PS_USAGE =
-    "usage: focker ps [-a]\n"
+    "usage: focker ps [-a] [--json]\n"
     "\n"
-    "  -a, --all   include exited families\n";
+    "  -a, --all   include exited families\n"
+    "  --json      print one JSON document instead of the table (keys in docs/USAGE.md)\n";
 
 static const char *NAME_USAGE_FMT =
     "usage: focker %s NAME\n";
@@ -429,17 +430,19 @@ static int cmd_handover(int argc, char **argv)
 
 static int cmd_ps_main(int argc, char **argv)
 {
-    bool all = false;
+    bool all = false, json = false;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--all") == 0)
             all = true;
+        else if (strcmp(argv[i], "--json") == 0)
+            json = true;
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             fputs(PS_USAGE, stdout);
             return FK_OK;
         } else
             return usage_error(PS_USAGE, "unexpected argument '%s'", argv[i]);
     }
-    return cmd_ps(all);
+    return cmd_ps(all, json);
 }
 
 static int cmd_inspect(int argc, char **argv)

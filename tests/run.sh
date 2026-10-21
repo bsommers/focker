@@ -353,6 +353,15 @@ if command -v python3 >/dev/null; then
     check "inspect --json has every top-level key" \
         jsonok "set(d) == {'name', 'supervisor', 'state_dir', 'linger', 'members', 'held_fds'} and d['name'] == 'jsonfam'" <<<"$j"
     expect_rc "inspect --json on a missing family exits 1" 1 "$F" inspect --json nobody
+    j=$("$F" ps --json)
+    check "ps --json is valid JSON" jsonok "isinstance(d['families'], list)" <<<"$j"
+    check "ps --json shows the running family" \
+        jsonok "any(f['name'] == 'jsonfam' and f['running'] is True and f['children'] == 1 and f['pid'] == $(sup_of jsonfam) for f in d['families'])" <<<"$j"
+    stop_family jsonfam
+    check "ps --json without -a omits stopped families" \
+        jsonok "not any(f['name'] == 'jsonfam' for f in d['families'])" <<<"$("$F" ps --json)"
+    check "ps -a --json includes stopped families" \
+        jsonok "any(f['name'] == 'jsonfam' and f['running'] is False and f['children'] is None and isinstance(f['status'], str) and f['status'] for f in d['families'])" <<<"$("$F" ps -a --json)"
 else
     printf '  skip  json (needs python3)\n'
 fi
