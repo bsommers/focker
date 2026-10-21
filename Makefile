@@ -10,13 +10,13 @@ BUILD     ?= build
 ASAN_CFLAGS  := -O1 -g -fno-omit-frame-pointer -fsanitize=address
 UBSAN_CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=undefined -fno-sanitize-recover=all
 LINT_C     := $(wildcard src/*.c) tests/unit.c $(wildcard examples/*.c)
-LINT_SH    := tests/run.sh tests/sanitize.sh tests/idle-cost.sh examples/demo.sh
+LINT_SH    := tests/run.sh tests/sanitize.sh tests/idle-cost.sh examples/demo.sh $(wildcard examples/usecases/*.sh)
 
 SRC      := $(wildcard src/*.c)
 OBJ      := $(SRC:src/%.c=$(BUILD)/%.o)
 EXAMPLES := $(BUILD)/ticker $(BUILD)/oldparent $(BUILD)/newparent
 
-.PHONY: all examples unit test asan lint ci idle-cost demo install uninstall clean
+.PHONY: all examples unit test asan lint ci idle-cost demo usecases install uninstall clean
 
 all: $(BUILD)/focker examples
 
@@ -58,7 +58,7 @@ lint:
 	    echo "analyze $$f"; \
 	    $(CC) $(FK_CFLAGS) -O2 -fanalyzer -Werror -c -o /dev/null $$f || exit 1; \
 	done
-	shellcheck -s bash $(LINT_SH)
+	shellcheck -x -s bash $(LINT_SH)
 
 # CPU and wakeups of an idle supervisor (not part of ci: it's a measurement)
 idle-cost: all
@@ -69,6 +69,10 @@ ci: lint test asan
 
 demo: all
 	examples/demo.sh
+
+# the docs/USE-CASES.md walkthroughs; each one fails if its claim does not hold
+usecases: all
+	set -e; for s in examples/usecases/*.sh; do case $$s in */lib.sh) continue;; esac; echo "### $$s"; FOCKER_BUILD=$(BUILD) $$s; done
 
 install: $(BUILD)/focker
 	install -Dm755 $(BUILD)/focker $(DESTDIR)$(PREFIX)/bin/focker

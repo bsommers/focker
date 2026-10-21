@@ -102,6 +102,7 @@ Every command takes `--help`. Exit codes are `0` for success, `1` for a runtime 
 
 - [docs/USAGE.md](docs/USAGE.md): full command and option reference, env vars, files, and the handover contract
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the kernel mechanics work and how focker is built
+- [docs/USE-CASES.md](docs/USE-CASES.md): practical uses (outliving a deadline, unwedging a hung orchestrator, replacing a wrapper mid-job, snapshot pauses), with runnable walkthroughs (`make usecases`)
 - [docs/HOWTO.md](docs/HOWTO.md): recipes, such as live-upgrading a parent, writing a new-parent program, and handling stubborn parents
 - [docs/LIMITATIONS.md](docs/LIMITATIONS.md): what focker cannot do, and why
 

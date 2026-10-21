@@ -16,6 +16,9 @@ variables, the control protocol in docs/USAGE.md) is the public API.
   via `inet_diag`, as kind `tcp`, drained like unix sockets. The transcript shows the endpoints. Connections
   to other addresses and listening sockets are never taken.
 - Test fixture: `oldparent -T4|-T6` connects each child's stdout over loopback TCP.
+- docs/USE-CASES.md and `examples/usecases/`: four runnable walkthroughs that check their own claims
+  (`make usecases`): outliving `timeout`, unwedging a hung orchestrator, replacing a log wrapper mid-job with
+  `handover` (a Python new parent, `logwrap.py`), and pausing a writer for a snapshot.
 
 ### Fixed
 - After serving a request, the supervisor could drain held fds through stale slot indices, and drained fds
