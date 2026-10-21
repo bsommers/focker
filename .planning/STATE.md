@@ -24,8 +24,8 @@ See: .planning/PROJECT.md (updated 2026-10-20)
 
 Milestone: v2.0 Reach (v1.0 Hardening shipped 2026-10-20, see .planning/MILESTONES.md)
 Phase: 5 (Fd control and JSON), first of phases 5-8
-Plan: 0 of TBD in current phase
-Status: Ready to plan
+Plan: 0 of 1 in current phase
+Status: Planned (05-01-PLAN.md; steps in docs/superpowers/plans/2026-10-20-fd-control-and-json.md)
 Last activity: 2026-10-20 — v1.0 archived; v2.0 requirements and roadmap written
 
 Progress: [░░░░░░░░░░] 0% (v2.0)
@@ -83,5 +83,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-10-20
-Stopped at: v2.0 roadmap written; next is planning Phase 5. Phase 8 (CRIU) decided: option (a)
+Stopped at: Phase 5 planned, awaiting review; Phase 8 (CRIU) decided: option (a)
 Resume file: None

@@ -37,7 +37,10 @@ whose tests it then has to keep passing.
   1. After `focker release NAME FD` on a held `pipe-w`, the child reads EOF on its stdin (integration test with a child that exits on EOF)
   2. Releasing a drained read end closes its log, and `inspect` stops listing it; an unknown FD exits 1
   3. `ps --json` and `inspect --json` parse with `python3 -m json.tool`, and their keys are documented in USAGE
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 05-01-PLAN.md — sb_json_str, inspect/ps --json, focker release (steps in docs/superpowers/plans/2026-10-20-fd-control-and-json.md)
 
 ### Phase 6: Loopback TCP takeover
 **Goal**: A child talking to its old parent over loopback TCP keeps its connection through a cutover
