@@ -1,3 +1,4 @@
 build/
 build-asan/
 build-ubsan/
+docs/plans/checkpoint.md
