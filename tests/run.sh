@@ -296,6 +296,48 @@ check "--wait doesn't signal the parent" grep -q "waiting for old parent" <<<"$o
 check "--wait adopts the child" test "$(ppid_of "$T")" = "$SUP"
 stop_family waiter
 
+echo "async cutover"
+async_fam() { # NAME: two oldparents P1, P2 under one sh; T1 (P1's ticker) is adopted with its pipe draining
+    start "$1" sh -c "$B/oldparent 1 -- -i 50 & $B/oldparent 1 -- -i 50 & wait" || return 1
+    SUP=$(sup_of "$1")
+    local sh; sh=$(kids_of "$SUP" | head -1)
+    wait_for bash -c "[ \$(pgrep -P $sh | wc -l) -eq 2 ] && for p in \$(pgrep -P $sh); do pgrep -P \$p >/dev/null || exit 1; done"
+    read -r P1 P2 <<<"$(kids_of "$sh" | tr '\n' ' ')"
+    T1=$(kids_of "$P1" | head -1) T2=$(kids_of "$P2" | head -1)
+    "$F" cutover --from "$P1" "$1" >/dev/null
+}
+frozen_by() { grep -q "^TracerPid:[[:space:]]*$2\$" "/proc/$1/status" 2>/dev/null; }   # PID SUP
+busy() { local out; out=$("$@" 2>&1) && return 1; grep -q 'busy (a cutover is in progress)' <<<"$out"; }
+
+async_fam async
+"$F" cutover --wait -t 5 async "$T2" >"$FOCKER_RUNTIME_DIR/async.out" 2>&1 & cpid=$!
+wait_for frozen_by "$T2" "$SUP"
+log1=$FOCKER_RUNTIME_DIR/async/adopted-$T1-fd1.log
+s1=$(stat -c %s "$log1"); sleep 0.5; s2=$(stat -c %s "$log1")
+check "drains keep running during a cutover" test "$s2" -gt "$s1"
+expect_rc "inspect answers during a cutover"      0 timeout 2 "$F" inspect async
+check "info answers during a cutover" bash -c "timeout 2 '$F' ps | grep -qw async"
+check "a second cutover is busy" busy "$F" cutover async "$T1"
+check "a dry run is busy too" busy "$F" cutover --dry-run async "$T1"
+check "release is busy" busy "$F" release async 3
+check "handover is busy" busy "$F" handover async -- /nonexistent/parent
+check "stop is busy" busy "$F" stop async
+check "stop leaves the family running" alive "$T1"
+kill "$P2"
+wait "$cpid"; rc=$?
+check "the waiting cutover completes" test $rc -eq 0
+check "the waiting cutover adopts the child" grep -q "adopted $T2" "$FOCKER_RUNTIME_DIR/async.out"
+stop_family async
+
+async_fam async2
+"$F" cutover --wait -t 5 async2 "$T2" >/dev/null 2>&1 & cpid=$!
+wait_for frozen_by "$T2" "$SUP"
+kill -9 "$cpid"; wait "$cpid" 2>/dev/null
+kill "$P2"
+check "a vanished client doesn't stop the cutover" wait_for bash -c "[ \"\$(ps -o ppid= -p $T2 | tr -d ' ')\" = $SUP ]"
+expect_rc "the supervisor survives a vanished client" 0 "$F" inspect async2
+stop_family async2
+
 echo "logs"
 start logf "$B/oldparent" 1 -- -i 50
 "$F" logs -f logf >"$FOCKER_RUNTIME_DIR/logf.out" 2>&1 & lpid=$!

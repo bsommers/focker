@@ -254,7 +254,7 @@ $FOCKER_RUNTIME_DIR/NAME/
 
 ## Control protocol
 
-The control socket is a unix `SOCK_STREAM` socket. A request is a sequence of NUL-terminated tokens followed by `shutdown(SHUT_WR)`. The reply is `ok\n` or `err\n`, then free text, then close. `handover` replies `exec\n` and its transcript, then keeps the connection open across `execve`: the socket is close-on-exec, so EOF means the exec happened, and `\nerr\n` plus a reason means it failed (`focker handover` then exits 1). Requests are served one at a time.
+The control socket is a unix `SOCK_STREAM` socket. A request is a sequence of NUL-terminated tokens followed by `shutdown(SHUT_WR)`. The reply is `ok\n` or `err\n`, then free text, then close. `handover` replies `exec\n` and its transcript, then keeps the connection open across `execve`: the socket is close-on-exec, so EOF means the exec happened, and `\nerr\n` plus a reason means it failed (`focker handover` then exits 1). Requests are served one at a time, except that a cutover waiting for its old parents (up to `--timeout`) runs in the background: meanwhile `info`, `members` and `inspect` are answered and held fds keep draining, while `cutover` (including `--dry-run`), `release`, `stop` and `handover` get `err` and `busy (a cutover is in progress)`. The cutover's own reply is sent when it ends.
 
 | request | tokens |
 |---|---|

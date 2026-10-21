@@ -22,6 +22,7 @@ From 1 and 2: to give a child a new parent, the new parent must be an ancestor s
 │   ├─ reaper: waitid(WNOWAIT) peek → name → waitpid → member table                          │
 │   ├─ drains: held read ends → adopted-PID-fdN.log                                          │
 │   ├─ requests: info · members · inspect · stop · cutover ─→ cutover.c · handover (execve)  │
+│   ├─ cutover in flight: stepped every 20 ms round; others get busy, reads still answered   │
 │   └─ exit when no children remain (unless --linger)                                        │
 └────────────────────────────────────────────────────────────────────────────────────────────┘
       cutover.c   freeze (ptrace|signal) · fd plan + pidfd_getfd · pidfd_send_signal · verify · thaw/swallow
@@ -98,7 +99,7 @@ Every ptrace wait first peeks with `waitid(WNOWAIT)`. If the thread-group leader
 
 ### 4.3 Take fds, cut ties, wait
 
-`pidfd_open(P)`, then `pidfd_getfd(P, fd)` for each planned fd. The new fd is `O_CLOEXEC` and shares the open file description, so the pipe now has a second holder. Then `pidfd_send_signal(P, SIG)`, which can't hit a recycled PID. Then the cutover polls the P pidfds (they become readable on exit) and re-reads each target's `PPid:` every ≤20 ms until none of them points at P any more.
+`pidfd_open(P)`, then `pidfd_getfd(P, fd)` for each planned fd. The new fd is `O_CLOEXEC` and shares the open file description, so the pipe now has a second holder. Then `pidfd_send_signal(P, SIG)`, which can't hit a recycled PID. Then the wait: `cutover_start` returns a pending job, and the supervisor's loop calls `cutover_step` every round (the poll timeout drops from 1 s to 20 ms while a job is in flight). Each step re-reads every target's `PPid:` and ends the job once none of them points at P any more, or rolls back once `--timeout` has passed. Meanwhile the loop keeps draining held fds and answers `info`, `members` and `inspect`; `cutover`, `release`, `stop` and `handover` are refused with `busy (a cutover is in progress)`. A client that disconnects mid-wait doesn't stop the cutover; its reply is dropped.
 
 ### 4.4 Verify, thaw, swallow
 

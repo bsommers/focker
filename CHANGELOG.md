@@ -20,6 +20,11 @@ variables, the control protocol in docs/USAGE.md) is the public API.
   (`make usecases`): outliving `timeout`, unwedging a hung orchestrator, replacing a log wrapper mid-job with
   `handover` (a Python new parent, `logwrap.py`), and pausing a writer for a snapshot.
 
+### Changed
+- A cutover waiting for its old parents no longer blocks the supervisor. Held fds keep draining, `info`,
+  `members` and `inspect` are answered, and `cutover`, `release`, `stop` and `handover` are refused with
+  `busy (a cutover is in progress)` (exit 1) until it ends. A client that disconnects mid-wait doesn't stop it.
+
 ### Fixed
 - After serving a request, the supervisor could drain held fds through stale slot indices, and drained fds
   are blocking.

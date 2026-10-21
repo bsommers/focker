@@ -9,7 +9,7 @@ last_mapped_at: 2026-10-20T03:34:23Z
 
 ## Tech Debt
 
-- **Synchronous request handling.** `handle_client()` runs a whole cutover inside the poll loop, so other drains stall for its duration. That's fine at millisecond scale, but a long `--wait -t 3600` blocks the family's drains and other clients. Fix: run a cutover as an incremental state machine inside the loop. (`src/supervisor.c` `handle_client`, `src/cutover.c` `cutover`)
+- ~~Synchronous request handling~~: fixed in Phase 7 (ASYNC-01). The wait for the old parents is a job stepped from the poll loop; drains and read-only requests carry on, and mutating requests get `busy`. Validation, freeze, fd takeover and thaw are still inline (bounded: at most 2 s for `--freeze signal`).
 - **Static buffers in `cutover.c`** (`plan`, `cf`/`pf` fd tables) and `signame()`/`cmd_of()` rotating buffers are not reentrant. That's safe today only because the supervisor is single-threaded.
 - **Bystander `old_ppid` is best-effort** when several parents are cut at once (`src/cutover.c` step 6).
 - **The member table forgets the oldest dead members at 256 entries.** Long-lived families lose history.

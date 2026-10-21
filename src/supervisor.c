@@ -28,6 +28,14 @@ static pid_t first_pid;
 static int first_status = -1;
 static bool linger_;
 
+/* the cutover in flight, if any: its job, the client waiting for the reply,
+ * and the transcript so far. The wait for the old parents spans loop rounds. */
+static struct {
+    struct cutover_job *job;
+    int cfd;
+    struct sbuf out;
+} inflight = { .cfd = -1 };
+
 struct member *family_member(struct family *f, pid_t pid, bool create)
 {
     for (int i = 0; i < f->nmembers; i++)
@@ -341,7 +349,21 @@ static const char *kv(char *tok, const char *key)
     return strncmp(tok, key, n) == 0 && tok[n] == '=' ? tok + n + 1 : NULL;
 }
 
-static int do_cutover(char **args, int nargs, struct sbuf *out)
+/* write the reply of the cutover in flight; a client that went away just misses it */
+static void finish_inflight(int rc)
+{
+    inflight.job = NULL;
+    dprintf(inflight.cfd, "%s\n%.*s", rc == 0 ? "ok" : "err", (int)inflight.out.len,
+            inflight.out.p ? inflight.out.p : "");
+    close(inflight.cfd);
+    inflight.cfd = -1;
+    sb_free(&inflight.out);
+    logmsg("cutover %s", rc == 0 ? "succeeded" : "failed");
+}
+
+/* Returns -1 when the cutover is waiting for the old parents: the job, cfd and
+ * the transcript move to inflight, and finish_inflight replies later. */
+static int do_cutover(char **args, int nargs, int cfd, struct sbuf *out)
 {
     struct cutover_opts o = { .freeze = FREEZE_PTRACE, .sig = SIGTERM, .timeout_ms = 10000,
                               .steal = true, .drain = true, .suppress = true };
@@ -383,10 +405,12 @@ static int do_cutover(char **args, int nargs, struct sbuf *out)
     }
     struct cutover_job *job;
     int rc = cutover_start(&fam, &o, pids, npids, out, &job);
-    while (rc == CUTOVER_PENDING) {
-        rc = cutover_step(job, out);
-        if (rc == CUTOVER_PENDING)
-            sleep_ms(20);
+    if (rc == CUTOVER_PENDING) {
+        inflight.job = job;
+        inflight.cfd = cfd;
+        inflight.out = *out;
+        *out = (struct sbuf){ 0 };
+        return -1;
     }
     if (!o.dry_run)
         logmsg("cutover %s", rc == 0 ? "succeeded" : "failed");
@@ -571,6 +595,9 @@ static void handle_client(int cfd)
     int rc = 1;
     if (nargs == 0)
         sb_printf(&out, "empty request\n");
+    else if (inflight.job && (strcmp(args[0], "cutover") == 0 || strcmp(args[0], "release") == 0 ||
+                              strcmp(args[0], "stop") == 0 || strcmp(args[0], "handover") == 0))
+        sb_printf(&out, "busy (a cutover is in progress)\n");
     else if (strcmp(args[0], "info") == 0)
         rc = do_info(&out);
     else if (strcmp(args[0], "members") == 0)
@@ -578,19 +605,19 @@ static void handle_client(int cfd)
     else if (strcmp(args[0], "inspect") == 0)
         rc = do_inspect(&out, nargs > 1 && strcmp(args[1], "json=1") == 0);
     else if (strcmp(args[0], "cutover") == 0)
-        rc = do_cutover(args, nargs, &out);
+        rc = do_cutover(args, nargs, cfd, &out);
     else if (strcmp(args[0], "release") == 0)
         rc = do_release(args, nargs, &out);
     else if (strcmp(args[0], "stop") == 0)
         rc = do_stop(args, nargs, &out);
-    else if (strcmp(args[0], "handover") == 0) {
+    else if (strcmp(args[0], "handover") == 0)
         rc = do_handover(args, nargs, cfd, &out);
-        if (rc < 0) { /* reply already sent and cfd closed */
-            sb_free(&out);
-            return;
-        }
-    } else
+    else
         sb_printf(&out, "unknown request '%s'\n", args[0]);
+    if (rc < 0) { /* reply already sent and cfd closed, or deferred to finish_inflight */
+        sb_free(&out);
+        return;
+    }
 
     dprintf(cfd, "%s\n%.*s", rc == 0 ? "ok" : "err", (int)out.len, out.p ? out.p : "");
     close(cfd);
@@ -672,7 +699,7 @@ int supervisor_run(const char *name, const char *dir, char **argv, bool detached
 
     for (;;) {
         reap_children();
-        if (!linger_ && live_children() == 0)
+        if (!linger_ && live_children() == 0 && !inflight.job)
             break;
 
         struct pollfd pfd[2 + MAX_STOLEN];
@@ -685,7 +712,7 @@ int supervisor_run(const char *name, const char *dir, char **argv, bool detached
                 idx[n] = i;
                 pfd[n++] = (struct pollfd){ .fd = fam.stolen[i].fd, .events = POLLIN };
             }
-        if (poll(pfd, n, 1000) < 0 && errno != EINTR) {
+        if (poll(pfd, n, inflight.job ? 20 : 1000) < 0 && errno != EINTR) {
             logmsg("poll: %s", strerror(errno));
             break;
         }
@@ -700,6 +727,13 @@ int supervisor_run(const char *name, const char *dir, char **argv, bool detached
                     forward_signal((int)si.ssi_signo);
                 }
                 linger_ = false;
+            }
+        }
+        if (inflight.job) {
+            int rc = cutover_step(inflight.job, &inflight.out);
+            if (rc != CUTOVER_PENDING) {
+                finish_inflight(rc);
+                continue; /* a rollback may have closed held-fd slots, so idx[] is stale */
             }
         }
         if (pfd[1].revents & POLLIN) {
