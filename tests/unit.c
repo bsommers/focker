@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -272,6 +274,115 @@ static void test_live(void)
     close(s[1]);
 }
 
+static bool loop_is(int family, const char *text)
+{
+    unsigned char a[16];
+    return inet_pton(family, text, a) == 1 && inet_is_loopback(family, a);
+}
+
+static void test_loopback(void)
+{
+    puts("loopback classifier");
+    CHECK("127.0.0.1", loop_is(AF_INET, "127.0.0.1"));
+    CHECK("127.255.0.9", loop_is(AF_INET, "127.255.0.9"));
+    CHECK("::1", loop_is(AF_INET6, "::1"));
+    CHECK("::ffff:127.0.0.1", loop_is(AF_INET6, "::ffff:127.0.0.1"));
+    CHECK("not 10.0.0.1", !loop_is(AF_INET, "10.0.0.1"));
+    CHECK("not 192.168.1.5", !loop_is(AF_INET, "192.168.1.5"));
+    CHECK("not ::", !loop_is(AF_INET6, "::"));
+    CHECK("not ::ffff:10.0.0.1", !loop_is(AF_INET6, "::ffff:10.0.0.1"));
+    CHECK("not fe80::1", !loop_is(AF_INET6, "fe80::1"));
+}
+
+/* Listen on loopback, connect twice, accept both. Returns -1 if the family
+ * can't bind loopback (no IPv6), leaving every fd at -1. */
+static int tcp_pairs(int family, int *lis, int c[2], int s[2])
+{
+    struct sockaddr_storage ss = { 0 };
+    socklen_t len;
+    int l, cc[2] = { -1, -1 }, sc[2] = { -1, -1 };
+    *lis = c[0] = c[1] = s[0] = s[1] = -1;
+    if (family == AF_INET) {
+        struct sockaddr_in *a = (struct sockaddr_in *)&ss;
+        a->sin_family = AF_INET;
+        a->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        len = sizeof *a;
+    } else {
+        struct sockaddr_in6 *a = (struct sockaddr_in6 *)&ss;
+        a->sin6_family = AF_INET6;
+        a->sin6_addr = in6addr_loopback;
+        len = sizeof *a;
+    }
+    l = socket(family, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (l < 0)
+        return -1;
+    if (bind(l, (struct sockaddr *)&ss, len) < 0 || listen(l, 4) < 0 ||
+        getsockname(l, (struct sockaddr *)&ss, &len) < 0)
+        goto fail;
+    for (int i = 0; i < 2; i++) {
+        cc[i] = socket(family, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (cc[i] < 0 || connect(cc[i], (struct sockaddr *)&ss, len) < 0)
+            goto fail;
+        sc[i] = accept4(l, NULL, NULL, SOCK_CLOEXEC);
+        if (sc[i] < 0)
+            goto fail;
+    }
+    *lis = l;
+    for (int i = 0; i < 2; i++) {
+        c[i] = cc[i];
+        s[i] = sc[i];
+    }
+    return 0;
+fail:
+    for (int i = 0; i < 2; i++) {
+        if (cc[i] >= 0)
+            close(cc[i]);
+        if (sc[i] >= 0)
+            close(sc[i]);
+    }
+    close(l);
+    return -1;
+}
+
+static void test_tcp_family(int family, const char *tag, const char *prefix, const char *mid)
+{
+    int lis, c[2], s[2];
+    char name[96], ends[128];
+    if (tcp_pairs(family, &lis, c, s) < 0) {
+        printf("  skip  live %s tcp pairs (cannot bind loopback)\n", tag);
+        return;
+    }
+#define TCHECK(what, cond)                                     \
+    do {                                                       \
+        snprintf(name, sizeof name, "%s: %s", tag, what);      \
+        CHECK(name, cond);                                     \
+    } while (0)
+    TCHECK("inetdiag dump succeeds", inetdiag_load() == 0);
+    TCHECK("first client pairs with its own server end", inetdiag_peer(ino_of(c[0])) == ino_of(s[0]));
+    TCHECK("and back", inetdiag_peer(ino_of(s[0])) == ino_of(c[0]));
+    TCHECK("second client pairs with its own server end", inetdiag_peer(ino_of(c[1])) == ino_of(s[1]));
+    TCHECK("and back", inetdiag_peer(ino_of(s[1])) == ino_of(c[1]));
+    TCHECK("a listening socket has no peer", inetdiag_peer(ino_of(lis)) == 0);
+    TCHECK("an unknown inode has no peer", inetdiag_peer(1) == 0);
+    TCHECK("endpoints are formatted",
+           inetdiag_endpoints(ino_of(c[0]), ends, sizeof ends) == 0 &&
+               strncmp(ends, prefix, strlen(prefix)) == 0 && strstr(ends, mid) != NULL);
+    TCHECK("endpoints of an unknown inode fail", inetdiag_endpoints(1, ends, sizeof ends) < 0);
+#undef TCHECK
+    for (int i = 0; i < 2; i++) {
+        close(c[i]);
+        close(s[i]);
+    }
+    close(lis);
+}
+
+static void test_tcp(void)
+{
+    puts("live tcp pairs");
+    test_tcp_family(AF_INET, "v4", "127.0.0.1:", " <-> 127.0.0.1:");
+    test_tcp_family(AF_INET6, "v6", "[::1]:", " <-> [::1]:");
+}
+
 int main(void)
 {
     build_fixture();
@@ -284,6 +395,8 @@ int main(void)
     test_children_both_ways();
     test_fds();
     test_live();
+    test_loopback();
+    test_tcp();
     char cmd[PATH_MAX + 16];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", root);
     if (system(cmd) != 0)

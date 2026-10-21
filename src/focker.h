@@ -64,6 +64,12 @@ uint64_t proc_sigpending(pid_t pid);                  /* shared + every thread's
 int           unixdiag_load(void);
 unsigned long unixdiag_peer(unsigned long ino);       /* 0 if unknown */
 
+/* inetdiag.c: loopback TCP pairs */
+int           inetdiag_load(void);
+unsigned long inetdiag_peer(unsigned long ino);       /* 0 unless a loopback peer */
+int           inetdiag_endpoints(unsigned long ino, char *buf, size_t len); /* "L <-> R" */
+bool          inet_is_loopback(int family, const void *addr);
+
 /* family state, owned by supervisor.c */
 struct member {
     pid_t pid, old_ppid;
