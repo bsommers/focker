@@ -338,6 +338,29 @@ check "a vanished client doesn't stop the cutover" wait_for bash -c "[ \"\$(ps -
 expect_rc "the supervisor survives a vanished client" 0 "$F" inspect async2
 stop_family async2
 
+async_fam async3
+"$F" cutover --wait -t 1 async3 "$T2" >/dev/null 2>&1 & cpid=$!
+wait_for frozen_by "$T2" "$SUP"
+kill -9 "$T2"
+wait "$cpid"; rc=$?
+check "a target killed during the wait fails the cutover" test $rc -eq 1
+check "a target killed during the wait is not a member" bash -c "! '$F' inspect async3 | grep -Eq '^ +$T2 '"
+kill_family "$FOCKER_RUNTIME_DIR/async3"
+
+async_fam async4
+"$F" cutover --wait -t 5 async4 "$T2" >"$FOCKER_RUNTIME_DIR/async4.out" 2>&1 & cpid=$!
+wait_for frozen_by "$T2" "$SUP"
+kill -TERM "$SUP"
+check "SIGTERM during the wait ends the cutover" wait_for bash -c "! kill -0 $cpid 2>/dev/null"
+wait "$cpid"; rc=$?
+check "SIGTERM during the wait fails the cutover" test $rc -eq 1
+check "SIGTERM during the wait rolls back first" \
+    bash -c "grep -q 'cancelled by SIGTERM' '$FOCKER_RUNTIME_DIR/async4.out' && grep -q 'rolled back' '$FOCKER_RUNTIME_DIR/async4.out'"
+check "T2 is not left stopped" bash -c "! kill -0 $T2 2>/dev/null ||
+    { ps -o stat= -p $T2 | grep -qv '^[Tt]' && grep -q '^TracerPid:[[:space:]]*0\$' /proc/$T2/status; }"
+kill -9 "$T2" 2>/dev/null
+kill_family "$FOCKER_RUNTIME_DIR/async4"
+
 echo "logs"
 start logf "$B/oldparent" 1 -- -i 50
 "$F" logs -f logf >"$FOCKER_RUNTIME_DIR/logf.out" 2>&1 & lpid=$!

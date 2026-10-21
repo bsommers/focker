@@ -26,7 +26,7 @@ whose tests it then has to keep passing.
 
 - [x] **Phase 5: Fd control and JSON** - `focker release`, `ps --json`, `inspect --json`
 - [x] **Phase 6: Loopback TCP takeover** - inet_diag peer matching for TCP between old parent and target
-- [ ] **Phase 7: Async cutover** - non-blocking cutover inside the poll loop
+- [x] **Phase 7: Async cutover** - non-blocking cutover inside the poll loop
 - [ ] **Phase 8: CRIU adoption** - adopt trees not started under focker, via a capability-granted `criu`
 - [ ] **Phase 9: Stubborn parents** - warn about TERM-catching parents, `--kill-after`, `--tree`
 - [ ] **Phase 10: focker wait** - block until members exit and return their exit code
@@ -72,7 +72,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 07-01-PLAN.md — cutover as a job, stepped from the poll loop, busy refusals, reaper/signal safety (steps in docs/superpowers/plans/2026-10-20-async-cutover.md)
+- [x] 07-01-PLAN.md — cutover as a job, stepped from the poll loop, busy refusals, reaper/signal safety (steps in docs/superpowers/plans/2026-10-20-async-cutover.md)
 
 ### Phase 8: CRIU adoption
 **Goal**: A process tree started outside focker can be brought under a family
@@ -130,7 +130,7 @@ Plans:
 | 1-4 | v1.0 | 5/5 | Complete | 2026-10-20 |
 | 5. Fd control and JSON | v2.0 | 1/1 | Complete | 2026-10-20 |
 | 6. Loopback TCP takeover | v2.0 | 1/1 | Complete | 2026-10-20 |
-| 7. Async cutover | v2.0 | 0/1 | Planned | - |
+| 7. Async cutover | v2.0 | 1/1 | Complete | 2026-10-21 |
 | 8. CRIU adoption | v2.0 | 0/TBD | Not started | - |
 | 9. Stubborn parents | v2.0 | 0/TBD | Not started | - |
 | 10. focker wait | v2.0 | 0/TBD | Not started | - |

@@ -163,6 +163,8 @@ static void reap_children(void)
         if (waitid(P_ALL, 0, &si, WEXITED | WNOHANG | WNOWAIT) < 0 || si.si_pid == 0)
             return;
         pid_t pid = si.si_pid;
+        if (inflight.job && cutover_owns(inflight.job, pid))
+            return; /* a frozen target's exit: the job consumes it within a round */
         struct member *m = family_member(&fam, pid, false);
         if (!m && (m = family_member(&fam, pid, true))) {
             m->origin = 'o';
@@ -716,11 +718,17 @@ int supervisor_run(const char *name, const char *dir, char **argv, bool detached
             logmsg("poll: %s", strerror(errno));
             break;
         }
+        bool cancelled = false;
         if (pfd[0].revents & POLLIN) {
             struct signalfd_siginfo si;
             while (read(sfd, &si, sizeof si) == sizeof si) {
                 if (si.ssi_signo == SIGCHLD)
                     continue; /* reaped at the top of the loop */
+                /* roll back first: the targets must not be left frozen when the family is told to go */
+                if (inflight.job) {
+                    finish_inflight(cutover_cancel(inflight.job, signame((int)si.ssi_signo), &inflight.out));
+                    cancelled = true;
+                }
                 /* the tty already signals the whole foreground group; only relay kill(1)-style signals */
                 if (si.ssi_code != SI_KERNEL) {
                     logmsg("got %s, forwarding to children", signame((int)si.ssi_signo));
@@ -729,6 +737,8 @@ int supervisor_run(const char *name, const char *dir, char **argv, bool detached
                 linger_ = false;
             }
         }
+        if (cancelled)
+            continue; /* the rollback closed held-fd slots, so idx[] is stale */
         if (inflight.job) {
             int rc = cutover_step(inflight.job, &inflight.out);
             if (rc != CUTOVER_PENDING) {

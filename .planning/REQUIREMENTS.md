@@ -19,7 +19,7 @@ keeps working during a cutover. v1.0 requirements are archived in `.planning/mil
 
 ### Supervisor
 
-- [ ] **ASYNC-01**: A cutover runs as a non-blocking state machine inside the poll loop. During a cutover (up to `--timeout`), held fds keep draining and other read-only requests (`info`, `inspect`, `members`) are answered. A second cutover is refused with `busy`
+- [x] **ASYNC-01**: A cutover runs as a non-blocking state machine inside the poll loop. During a cutover (up to `--timeout`), held fds keep draining and other read-only requests (`info`, `inspect`, `members`) are answered. A second cutover is refused with `busy`
 
 ### Reach
 
@@ -52,7 +52,7 @@ keeps working during a cutover. v1.0 requirements are archived in `.planning/mil
 | FD-02 | Phase 5 | Complete |
 | OUT-01 | Phase 5 | Complete |
 | FD-01 | Phase 6 | Complete |
-| ASYNC-01 | Phase 7 | Pending |
+| ASYNC-01 | Phase 7 | Complete |
 | CRIU-01 | Phase 8 | Pending |
 | STUB-01 | Phase 9 | Pending |
 | STUB-02 | Phase 9 | Pending |

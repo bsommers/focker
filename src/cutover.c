@@ -384,8 +384,20 @@ bool cutover_owns(const struct cutover_job *j, pid_t pid)
     return index_of(j->v, j->nv, pid) >= 0;
 }
 
+/* A target that died while frozen is focker's tracee (or, once its old parent
+ * is gone too, focker's child), so its exit is waiting in focker's waitid(). The
+ * reaper leaves the job's targets alone; consume the exit here, so a dead target
+ * never becomes a family member. Members (adopted, then died) go to the reaper. */
+static void consume_dead_targets(struct cutover_job *j)
+{
+    for (int i = 0; i < j->nv && i < j->ntfd; i++)
+        if (j->z[i].pid && !pinned_alive(j->tfd[i], j->v[i]) && !family_member(j->f, j->v[i], false))
+            waitpid(j->v[i], NULL, __WALL | WNOHANG);
+}
+
 static int job_end(struct cutover_job *j, int rc)
 {
+    consume_dead_targets(j);
     for (int k = 0; k < j->nparents; k++)
         if (j->pidfds[k] >= 0)
             close(j->pidfds[k]);
@@ -666,7 +678,7 @@ static int job_finish(struct cutover_job *j, long dt, struct sbuf *out)
     int failures = 0;
     for (int i = 0; i < j->nv; i++) {
         pid_t pp = proc_ppid(v[i]);
-        if (pp == self) {
+        if (pp == self && pinned_alive(j->tfd[i], v[i])) {
             struct member *m = family_member(f, v[i], true);
             if (m) {
                 m->origin = 'a';
@@ -728,6 +740,7 @@ static int job_finish(struct cutover_job *j, long dt, struct sbuf *out)
 
 int cutover_step(struct cutover_job *j, struct sbuf *out)
 {
+    consume_dead_targets(j);
     bool moved = true;
     for (int i = 0; i < j->nv; i++)
         if (proc_ppid(j->v[i]) == j->op[i]) {

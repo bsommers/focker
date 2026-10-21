@@ -123,7 +123,7 @@ What this catches:
 
 ### 5.1 Reaping without stealing names
 
-The reaper calls `waitid(P_ALL, WEXITED|WNOHANG|WNOWAIT)` first. That only peeks, so the zombie still exists and an unregistered orphan's `/proc/PID/comm` can be read before `waitpid` reaps it.
+The reaper calls `waitid(P_ALL, WEXITED|WNOHANG|WNOWAIT)` first. That only peeks, so the zombie still exists and an unregistered orphan's `/proc/PID/comm` can be read before `waitpid` reaps it. While a cutover is in flight, a peeked exit of one of its targets stops the reaper for that round: a frozen target is focker's tracee, so its exit reaches focker first. The job consumes it at its next step (`waitpid(__WALL|WNOHANG)` for every target whose pidfd says it's gone and that isn't a member), so a target that dies while frozen is never recorded as a member, and the reaper resumes within 20 ms.
 
 ### 5.2 Orphaned process groups and SIGSTOP
 
@@ -137,7 +137,7 @@ When a process exits, the kernel checks whether that makes a process group *orph
 
 ### 5.4 Signals to the supervisor
 
-`signalfd` handles them. A signal with `ssi_code == SI_KERNEL` came from the tty, which already signalled the whole foreground group, so it isn't forwarded. `kill(1)`-style signals are forwarded to direct children.
+`signalfd` handles them. A signal with `ssi_code == SI_KERNEL` came from the tty, which already signalled the whole foreground group, so it isn't forwarded. `kill(1)`-style signals are forwarded to direct children. A TERM, INT, HUP or QUIT that arrives while a cutover is waiting cancels it first, whatever its source: the transcript says `cutover: cancelled by SIGTERM`, the rollback thaws the targets, and the client gets exit 1. Only then is the signal forwarded, so no target is left frozen when the family is told to stop.
 
 ### 5.5 Handover
 

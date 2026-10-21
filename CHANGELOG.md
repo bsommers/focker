@@ -24,6 +24,9 @@ variables, the control protocol in docs/USAGE.md) is the public API.
 - A cutover waiting for its old parents no longer blocks the supervisor. Held fds keep draining, `info`,
   `members` and `inspect` are answered, and `cutover`, `release`, `stop` and `handover` are refused with
   `busy (a cutover is in progress)` (exit 1) until it ends. A client that disconnects mid-wait doesn't stop it.
+- A TERM, INT, HUP or QUIT to the supervisor during that wait rolls the cutover back (`cancelled by SIGTERM`)
+  before the signal is forwarded. A target that dies while frozen fails the cutover and is never recorded as a
+  family member.
 
 ### Fixed
 - After serving a request, the supervisor could drain held fds through stale slot indices, and drained fds
