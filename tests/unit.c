@@ -208,6 +208,32 @@ static void test_fds(void)
     CHECK("missing fd dir fails", proc_fds(102, fe, 8) < 0);
 }
 
+static bool json_is(const char *in, const char *want)
+{
+    struct sbuf b = { 0 };
+    sb_json_str(&b, in);
+    bool ok = b.p && strcmp(b.p, want) == 0;
+    if (!ok)
+        printf("        got %s, wanted %s\n", b.p ? b.p : "(nothing)", want);
+    sb_free(&b);
+    return ok;
+}
+
+static void test_json_str(void)
+{
+    puts("json strings");
+    CHECK("plain", json_is("abc", "\"abc\""));
+    CHECK("quotes and backslash", json_is("a\"b\\c", "\"a\\\"b\\\\c\""));
+    CHECK("control chars", json_is("\n\t\x01", "\"\\n\\t\\u0001\""));
+    CHECK("utf-8 passes through", json_is("h\xc3\xa9", "\"h\xc3\xa9\""));
+    CHECK("4-byte utf-8 passes through", json_is("\xf0\x9f\x98\x80", "\"\xf0\x9f\x98\x80\""));
+    CHECK("invalid utf-8 is replaced", json_is("a\xff" "b", "\"a\\ufffdb\""));
+    CHECK("a truncated sequence is replaced", json_is("\xc3", "\"\\ufffd\""));
+    CHECK("an overlong encoding is replaced", json_is("\xc0\xaf", "\"\\ufffd\\ufffd\""));
+    CHECK("a surrogate is replaced", json_is("\xed\xa0\x80", "\"\\ufffd\\ufffd\\ufffd\""));
+    CHECK("NULL is null", json_is(NULL, "null"));
+}
+
 static unsigned long ino_of(int fd)
 {
     struct stat st;
@@ -251,6 +277,7 @@ int main(void)
     build_fixture();
     proc_root = root;
     printf("focker unit tests (fixture %s)\n", root);
+    test_json_str();
     test_status();
     test_cmdline();
     test_tree();

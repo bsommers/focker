@@ -28,6 +28,7 @@
 struct sbuf { char *p; size_t len, cap; };
 void sb_printf(struct sbuf *sb, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 void sb_free(struct sbuf *sb);
+void sb_json_str(struct sbuf *sb, const char *s);     /* quoted JSON string, always valid UTF-8; NULL -> null */
 
 extern const char *log_prefix;
 void logmsg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));

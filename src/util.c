@@ -42,6 +42,71 @@ void sb_printf(struct sbuf *sb, const char *fmt, ...)
     }
 }
 
+/* Length of the valid UTF-8 sequence at s, or 0 if it isn't one (bad lead
+ * byte, missing continuation, overlong form, surrogate, or past U+10FFFF). */
+static int utf8_len(const unsigned char *s)
+{
+    unsigned char c = s[0];
+    int n;
+    unsigned char lo = 0x80, hi = 0xbf; /* allowed range of the second byte */
+    if (c >= 0xc2 && c <= 0xdf)
+        n = 2;
+    else if (c >= 0xe0 && c <= 0xef) {
+        n = 3;
+        if (c == 0xe0)
+            lo = 0xa0; /* overlong */
+        if (c == 0xed)
+            hi = 0x9f; /* surrogates */
+    } else if (c >= 0xf0 && c <= 0xf4) {
+        n = 4;
+        if (c == 0xf0)
+            lo = 0x90;
+        if (c == 0xf4)
+            hi = 0x8f;
+    } else
+        return 0;
+    if (s[1] < lo || s[1] > hi)
+        return 0;
+    for (int i = 2; i < n; i++)
+        if (s[i] < 0x80 || s[i] > 0xbf)
+            return 0;
+    return n;
+}
+
+void sb_json_str(struct sbuf *sb, const char *s)
+{
+    if (!s) {
+        sb_printf(sb, "null");
+        return;
+    }
+    sb_printf(sb, "\"");
+    for (const unsigned char *p = (const unsigned char *)s; *p;) {
+        if (*p >= 0x80) {
+            int n = utf8_len(p);
+            if (n) {
+                sb_printf(sb, "%.*s", n, (const char *)p);
+                p += n;
+            } else {
+                sb_printf(sb, "\\ufffd");
+                p++;
+            }
+            continue;
+        }
+        if (*p == '"' || *p == '\\')
+            sb_printf(sb, "\\%c", *p);
+        else if (*p == '\n')
+            sb_printf(sb, "\\n");
+        else if (*p == '\t')
+            sb_printf(sb, "\\t");
+        else if (*p < 0x20 || *p == 0x7f)
+            sb_printf(sb, "\\u%04x", *p);
+        else
+            sb_printf(sb, "%c", *p);
+        p++;
+    }
+    sb_printf(sb, "\"");
+}
+
 void sb_free(struct sbuf *sb)
 {
     free(sb->p);
