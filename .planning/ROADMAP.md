@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Cutover correctness** - Fix tracee reaping, group-stop preservation, pidfd-first validation, re-sent signal reporting
 - [x] **Phase 2: Test coverage** - Cover every untested path in TESTING.md, add parser unit tests
-- [ ] **Phase 3: Sanitizers and CI** - ASan/UBSan and analyzer builds, CI running the suite
+- [x] **Phase 3: Sanitizers and CI** - ASan/UBSan and analyzer builds, CI running the suite
 - [ ] **Phase 4: Efficiency** - Cheaper child enumeration, measured idle cost, documented limits
 
 ## Phase Details
@@ -61,7 +61,11 @@ Plans:
   1. `make asan test` passes with no sanitizer reports
   2. `make lint` exits 0
   3. The CI workflow file runs both on push, and it is verified with a local runner (`act`) or a first push
-**Plans**: TBD
+     (changed by the user: everything local, workflow left disabled; verified with `make ci`)
+**Plans**: 1 plan
+
+Plans:
+- [x] 03-01-PLAN.md — make asan / lint / ci, disabled workflow in ci/
 
 ### Phase 4: Efficiency
 **Goal**: Supervisor work per request and per idle tick is bounded and documented
@@ -82,5 +86,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Cutover correctness | 1/1 | Complete | 2026-10-20 |
 | 2. Test coverage | 2/2 | Complete | 2026-10-20 |
-| 3. Sanitizers and CI | 0/TBD | Not started | - |
+| 3. Sanitizers and CI | 1/1 | Complete | 2026-10-20 |
 | 4. Efficiency | 0/TBD | Not started | - |

@@ -45,7 +45,7 @@ stderr log lines prefixed `focker[NAME]:` (`logmsg()` in `src/util.c`). They go 
 
 ## CI/CD & Deployment
 
-No CI is configured. Deployment is `make install`.
+CI is written but disabled: `ci/github-actions.yml` runs `make lint`, `make test` and `make asan`, and GitHub ignores it until it is moved into `.github/workflows/`. `make ci` runs the same steps locally. Deployment is `make install`.
 
 ## Optional external tool
 

@@ -5,9 +5,11 @@
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-B=$ROOT/build
+B=${FOCKER_BUILD:-build}
+case $B in /*) ;; *) B=$ROOT/$B ;; esac
 F=$B/focker
-export FOCKER_RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/focker-test.XXXXXX")
+FOCKER_RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/focker-test.XXXXXX") || exit 1
+export FOCKER_RUNTIME_DIR
 unset FOCKER_FREEZE
 
 pass=0 fail=0
@@ -300,7 +302,7 @@ stop_family wide
 start fds sh -c "$B/oldparent 64 -- -i 200 & $B/oldparent 64 -- -i 200 & $B/oldparent 1 -- -i 200 & wait"
 SH=$(old_of fds)
 wait_for bash -c "test \$(for p in \$(pgrep -P $SH); do pgrep -P \$p; done | wc -l) -eq 129"
-A= Bp= C=
+A='' Bp='' C=
 for p in $(kids_of "$SH"); do
     if [ "$(nkids "$p")" -eq 1 ]; then C=$p; elif [ -z "$A" ]; then A=$p; else Bp=$p; fi
 done
@@ -313,6 +315,7 @@ check "dry run reports the held-fd limit" test $rc -eq 1 -a -n "$(grep 'more tha
 out=$("$F" cutover --from "$C" fds 2>&1); rc=$?
 check "a cutover past 128 held fds is refused" test $rc -eq 1
 check "the refused cutover left everything in place" test "$(ppid_of "$CT")" = "$C"
+# shellcheck disable=SC2086 # one pid per word
 kill $AT
 check "freed fds are released" wait_for bash -c "test \$('$F' inspect fds | grep -c ' pipe-r ') -le 64"
 expect_rc "freed slots are reused by the next cutover" 0 "$F" cutover --from "$C" fds

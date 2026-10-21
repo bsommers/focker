@@ -1,0 +1,32 @@
+# GitHub Actions workflow for focker. DISABLED: GitHub only runs workflows in
+# .github/workflows/, and this file deliberately lives in ci/. To enable it:
+#
+#   mkdir -p .github/workflows && git mv ci/github-actions.yml .github/workflows/ci.yml
+#
+# Every step is a make target, so `make ci` runs the same thing locally.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc make shellcheck python3
+      - name: kernel
+        run: |
+          uname -r
+          cat /proc/sys/kernel/yama/ptrace_scope   # 0 or 1 needed; 2+ blocks ptrace freezing
+      - name: lint
+        run: make lint
+      - name: test
+        run: make test
+      - name: sanitizers
+        run: make asan

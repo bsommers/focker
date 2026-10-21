@@ -9,7 +9,9 @@ last_mapped_at: 2026-10-20T03:34:23Z
 
 ## Test Framework
 
-- `tests/run.sh`, a self-contained bash harness. `make test` builds everything first.
+- `tests/run.sh`, a self-contained bash harness. `make test` builds everything first. `FOCKER_BUILD=DIR` points it at another build.
+- `make asan` builds `build-asan/` (ASan+LSan) and `build-ubsan/` (UBSan, `-fno-sanitize-recover`) from scratch and runs both suites through `tests/sanitize.sh`, which sends reports to files with `log_path` and fails if any exist. They are separate builds because in a combined build UBSan ignores `log_path`, and a detached supervisor's stderr is a `focker.log` the suite deletes.
+- `make lint`: `-fanalyzer -Werror` on all C sources, plus shellcheck. `make ci` = lint + test + asan (about a minute).
 - Each run uses a private `FOCKER_RUNTIME_DIR=$(mktemp -d)`. An EXIT trap SIGKILLs every supervisor and its children and removes the dir.
 - Runs in about 8 seconds without root. Output is `ok`/`FAIL` per check, then a summary. Exits nonzero on any failure.
 
@@ -48,7 +50,7 @@ Shell one-liners model specific parent behaviors: a parent that ignores TERM, on
 - Closed in Phase 2: parser unit tests (`tests/unit.c`), `--no-drain`, `--no-suppress`, `--wait`, `logs -f`, handover exec failure, the long-path `control_addr` fallback, the `MAX_*` limits, Ctrl-C.
 - Still untested: `MAX_TIDS` (256 threads), `MAX_ARGS`, `MAX_FDENTS`, and `demo.sh`.
 - Pitfall: `wait_for test "$(...)"` expands once and never retries. Put the command substitution inside `bash -c` or a function.
-- No CI, and no sanitizer build (ASan/UBSan) target.
+- CI: `ci/github-actions.yml` exists but is disabled (it lives outside `.github/workflows/`). The header comment says how to enable it.
 
 ## Writing new tests
 

@@ -233,6 +233,8 @@ static int cmd_run(int argc, char **argv)
     pid_t pid = fork();
     if (pid < 0) {
         fprintf(stderr, "focker: fork: %s\n", strerror(errno));
+        close(ready[0]);
+        close(ready[1]);
         return FK_FAIL;
     }
     if (pid == 0) {

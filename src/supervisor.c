@@ -77,23 +77,23 @@ static int setup_socket(void)
     int dfd;
     if (control_addr(fam.dir, &a, &dfd) < 0)
         return -1;
-    lfd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (lfd < 0)
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0)
         goto fail;
     unlink(sockpath);
     mode_t old = umask(0177);
-    int r = bind(lfd, (struct sockaddr *)&a, sizeof a);
+    int r = bind(fd, (struct sockaddr *)&a, sizeof a);
     umask(old);
-    if (r < 0 || listen(lfd, 16) < 0)
+    if (r < 0 || listen(fd, 16) < 0)
         goto fail;
     if (dfd >= 0)
         close(dfd);
+    lfd = fd;
     return 0;
 fail: {
     int e = errno;
-    if (lfd >= 0)
-        close(lfd);
-    lfd = -1;
+    if (fd >= 0)
+        close(fd);
     if (dfd >= 0)
         close(dfd);
     errno = e;

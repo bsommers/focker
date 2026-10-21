@@ -25,9 +25,9 @@ Milestone v1.0, Hardening. Each requirement maps to a roadmap phase.
 
 ### Build & CI
 
-- [ ] **BLD-01**: `make asan` builds with ASan+UBSan, and the full suite passes under it with no reports
-- [ ] **BLD-02**: `gcc -fanalyzer` (or cppcheck) runs clean, or has documented suppressions, via `make lint`
-- [ ] **BLD-03**: A CI workflow runs `make test` and `make asan test` on every push
+- [x] **BLD-01**: `make asan` builds with ASan+UBSan, and the full suite passes under it with no reports (two builds: ASan+LSan, then UBSan)
+- [x] **BLD-02**: `gcc -fanalyzer` (or cppcheck) runs clean, or has documented suppressions, via `make lint`
+- [x] **BLD-03**: A CI workflow runs `make test` and `make asan` on every push (written and checked locally with `make ci`; disabled at the user's request until there is a GitHub remote)
 
 ### Efficiency
 
@@ -74,9 +74,9 @@ Deferred and tracked, but not in the current roadmap.
 | TST-04 | Phase 2 | Complete |
 | TST-05 | Phase 2 | Complete |
 | TST-06 | Phase 2 | Complete |
-| BLD-01 | Phase 3 | Pending |
-| BLD-02 | Phase 3 | Pending |
-| BLD-03 | Phase 3 | Pending |
+| BLD-01 | Phase 3 | Complete |
+| BLD-02 | Phase 3 | Complete |
+| BLD-03 | Phase 3 | Complete (disabled) |
 | PERF-01 | Phase 4 | Pending |
 | PERF-02 | Phase 4 | Pending |
 

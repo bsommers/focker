@@ -28,7 +28,7 @@ A cutover must never leave a child worse off. Either the child ends up adopted, 
 
 - [ ] Fix the known correctness edge cases in the cutover engine (tracee reaping, group-stop preservation, pidfd-first validation)
 - [ ] Close the integration-test gaps listed in .planning/codebase/TESTING.md and add parser-level unit tests
-- [ ] Add sanitizer and static-analysis builds and CI that runs the suite
+- [x] Add sanitizer and static-analysis builds and CI that runs the suite (CI written but disabled until there is a remote)
 - [ ] Cut per-request `/proc` scan cost and make the member-history limits explicit
 
 ### Out of Scope
