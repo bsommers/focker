@@ -25,7 +25,7 @@ whose tests it then has to keep passing.
 - [ ] **Phase 5: Fd control and JSON** - `focker release`, `ps --json`, `inspect --json`
 - [ ] **Phase 6: Loopback TCP takeover** - inet_diag peer matching for TCP between old parent and target
 - [ ] **Phase 7: Async cutover** - non-blocking cutover inside the poll loop
-- [ ] **Phase 8: CRIU adoption** - adopt trees not started under focker (needs a decision first)
+- [ ] **Phase 8: CRIU adoption** - adopt trees not started under focker, via a capability-granted `criu`
 
 ## Phase Details
 
@@ -63,10 +63,11 @@ whose tests it then has to keep passing.
 **Goal**: A process tree started outside focker can be brought under a family
 **Depends on**: Phase 7
 **Requirements**: CRIU-01
-**Blocked on**: a user decision. CRIU needs root or `CAP_CHECKPOINT_RESTORE`, which conflicts with the unprivileged constraint unless the capability sits on the `criu` binary, not on focker. Options: (a) focker runs a `criu` that the user has granted the capability; (b) focker only prints the dump/restore commands; (c) drop CRIU-01
+**Decision** (user, 2026-10-20): option (a). focker runs a `criu` that the user has granted `CAP_CHECKPOINT_RESTORE` (`setcap cap_checkpoint_restore+eip $(command -v criu)`); focker itself gets no privilege
 **Success Criteria** (what must be TRUE):
-  1. Decided and recorded in PROJECT.md Key Decisions before planning
-  2. (if a or b) A tree started outside focker ends up as members of a family, with its pipes intact, in a test that is skipped without criu
+  1. `focker adopt-external NAME PID` (name settled in planning) dumps the tree with criu and restores it under the family's supervisor, so its processes become members
+  2. Without a capable criu it exits 1 with a message naming the `setcap` command, and changes nothing
+  3. An integration test runs when a capable criu is present and is reported as `skip` otherwise
 **Plans**: TBD
 
 ## Progress
@@ -77,4 +78,4 @@ whose tests it then has to keep passing.
 | 5. Fd control and JSON | v2.0 | 0/TBD | Not started | - |
 | 6. Loopback TCP takeover | v2.0 | 0/TBD | Not started | - |
 | 7. Async cutover | v2.0 | 0/TBD | Not started | - |
-| 8. CRIU adoption | v2.0 | 0/TBD | Blocked | - |
+| 8. CRIU adoption | v2.0 | 0/TBD | Not started | - |

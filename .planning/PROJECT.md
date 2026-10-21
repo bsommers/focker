@@ -65,6 +65,7 @@ A cutover must never leave a child worse off. Either the child ends up adopted, 
 | Two sanitizer builds, not one combined | UBSan ignores `log_path` when combined with ASan | ✓ Good |
 | `handover` replies `exec`, then EOF or `err` | The client must learn whether execve worked | ✓ Good |
 | Public repo github.com/bsommers/focker, CI disabled in `ci/` | User request | — Pending (CI) |
+| CRIU-01 uses a `criu` binary the user has granted `CAP_CHECKPOINT_RESTORE` (option a) | User chose (a): focker stays unprivileged, the capability sits on criu | — Pending (Phase 8) |
 
 ---
 *Last updated: 2026-10-20 after milestone v1.0, starting v2.0*

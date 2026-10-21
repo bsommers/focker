@@ -70,7 +70,7 @@ None yet.
 
 ### Blockers/Concerns
 
-- Phase 8 (CRIU-01) needs a decision: capability on the `criu` binary, print-only commands, or drop it (ROADMAP Phase 8).
+- [Decision 2026-10-20] Phase 8 (CRIU-01): user chose (a), a capability-granted `criu`; focker stays unprivileged.
 
 - The `/gsd-*` slash commands are unavailable in Claude Code until gsd-core is installed for it (`npx @opengsd/gsd-core@latest`).
 
@@ -83,5 +83,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-10-20
-Stopped at: v2.0 roadmap written; next is planning Phase 5. Phase 8 (CRIU) is blocked on a user decision
+Stopped at: v2.0 roadmap written; next is planning Phase 5. Phase 8 (CRIU) decided: option (a)
 Resume file: None

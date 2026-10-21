@@ -23,7 +23,7 @@ keeps working during a cutover. v1.0 requirements are archived in `.planning/mil
 
 ### Reach
 
-- [ ] **CRIU-01**: Adopt a process tree that was never started under focker, through a CRIU dump/restore wrapper run as the user. focker itself stays unprivileged; the privilege belongs to `criu` (needs a user decision before planning, see ROADMAP Phase 8)
+- [ ] **CRIU-01**: Adopt a process tree that was never started under focker, through a CRIU dump/restore wrapper run as the user. focker itself stays unprivileged; the privilege belongs to `criu` (user chose option a: the capability goes on `criu`)
 
 ## Out of Scope
 
@@ -43,7 +43,7 @@ keeps working during a cutover. v1.0 requirements are archived in `.planning/mil
 | OUT-01 | Phase 5 | Pending |
 | FD-01 | Phase 6 | Pending |
 | ASYNC-01 | Phase 7 | Pending |
-| CRIU-01 | Phase 8 | Pending (blocked on decision) |
+| CRIU-01 | Phase 8 | Pending |
 
 **Coverage:**
 - v2 requirements: 5 total
