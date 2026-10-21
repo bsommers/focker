@@ -8,7 +8,6 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -169,7 +168,7 @@ static void note_swallowed(struct sbuf *out, pid_t pid, int sig)
  * can be dropped. */
 static void thaw_ptrace(struct frozen *z, uint64_t swallow, struct sbuf *out)
 {
-    bool live[MAX_TIDS];
+    bool live[MAX_TIDS] = { 0 };
     for (int i = 0; i < z->ntids; i++)
         live[i] = true;
 
@@ -362,108 +361,163 @@ static int index_of(const pid_t *v, int n, pid_t pid)
     return -1;
 }
 
-int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, int nreq, struct sbuf *out)
+/* Everything a cutover keeps between cutover_start and its last cutover_step:
+ * the wait for the old parents (step 3) spans the supervisor's loop rounds. */
+struct cutover_job {
+    struct family      *f;
+    struct cutover_opts o;
+    pid_t  v[MAX_PIDS], op[MAX_PIDS]; /* targets and their old parents */
+    int    tfd[MAX_PIDS];             /* pidfds pinning each target, opened before anything reads /proc */
+    int    nv, ntfd;
+    pid_t  parents[MAX_PIDS];
+    int    pidfds[MAX_PIDS];          /* one per old parent; -1 until opened */
+    int    nparents;
+    pid_t  by[MAX_PIDS];              /* bystanders: the old parents' other children get orphaned too */
+    int    nby;
+    struct frozen z[MAX_PIDS];
+    int    stolen_base;
+    long   t0;
+};
+
+bool cutover_owns(const struct cutover_job *j, pid_t pid)
 {
+    return index_of(j->v, j->nv, pid) >= 0;
+}
+
+static int job_end(struct cutover_job *j, int rc)
+{
+    for (int k = 0; k < j->nparents; k++)
+        if (j->pidfds[k] >= 0)
+            close(j->pidfds[k]);
+    for (int i = 0; i < j->ntfd; i++)
+        close(j->tfd[i]);
+    free(j);
+    return rc;
+}
+
+static int job_rollback(struct cutover_job *j, struct sbuf *out)
+{
+    struct family *f = j->f;
+    for (int i = f->nstolen - 1; i >= j->stolen_base; i--) {
+        if (f->stolen[i].fd >= 0) /* a drained fd may have hit EOF during the wait */
+            close(f->stolen[i].fd);
+        if (f->stolen[i].logfd >= 0)
+            close(f->stolen[i].logfd);
+    }
+    f->nstolen = j->stolen_base;
+    for (int i = 0; i < j->nv; i++)
+        thaw(&j->z[i], j->o.freeze, 0, out);
+    sb_printf(out, "cutover: rolled back; processes left with their original parents\n");
+    return job_end(j, 1);
+}
+
+int cutover_start(struct family *f, const struct cutover_opts *opts, const pid_t *req, int nreq, struct sbuf *out,
+                  struct cutover_job **job)
+{
+    *job = NULL;
+    struct cutover_job *j = calloc(1, sizeof *j);
+    if (!j) {
+        sb_printf(out, "cutover: out of memory\n");
+        return 1;
+    }
+    j->f = f;
+    j->o = *opts;
+    for (int k = 0; k < MAX_PIDS; k++)
+        j->pidfds[k] = -1;
+    const struct cutover_opts *o = &j->o;
     pid_t self = getpid();
-    pid_t v[MAX_PIDS], op[MAX_PIDS];
-    int tfd[MAX_PIDS]; /* pidfds pinning each target, opened before anything reads /proc */
-    int nv = 0, ntfd = 0, rc = 1;
+    pid_t *v = j->v, *op = j->op;
 
     /* 0. collect and validate targets */
     if (o->from) {
         if (o->from == self || !proc_is_descendant(o->from, self)) {
             sb_printf(out, "cutover: %d is not a descendant of this family\n", o->from);
-            return 1;
+            return job_end(j, 1);
         }
         pid_t kids[MAX_PIDS + 1]; /* one extra, so a parent over the limit is noticed */
         int nk = proc_children(o->from, kids, MAX_PIDS + 1);
         if (nk <= 0) {
             sb_printf(out, "cutover: %d has no children\n", o->from);
-            return 1;
+            return job_end(j, 1);
         }
         if (nk > MAX_PIDS) {
             sb_printf(out, "cutover: %d has more than %d children; name at most %d of them\n", o->from, MAX_PIDS,
                       MAX_PIDS);
-            return 1;
+            return job_end(j, 1);
         }
         memcpy(v, kids, (size_t)nk * sizeof *v);
-        nv = nk;
+        j->nv = nk;
     }
     for (int i = 0; i < nreq; i++) {
-        if (index_of(v, nv, req[i]) >= 0)
+        if (index_of(v, j->nv, req[i]) >= 0)
             continue;
-        if (nv == MAX_PIDS) {
+        if (j->nv == MAX_PIDS) {
             sb_printf(out, "cutover: at most %d processes per cutover\n", MAX_PIDS);
-            return 1;
+            return job_end(j, 1);
         }
-        v[nv++] = req[i];
+        v[j->nv++] = req[i];
     }
-    if (nv == 0) {
+    if (j->nv == 0) {
         sb_printf(out, "cutover: nothing to cut over\n");
-        return 1;
+        return job_end(j, 1);
     }
 
     int keep = 0;
-    for (int i = 0; i < nv; i++) {
+    for (int i = 0; i < j->nv; i++) {
         pid_t pid = v[i];
         if (pid == self) {
             sb_printf(out, "cutover: %d is focker itself\n", pid);
-            goto done;
+            return job_end(j, 1);
         }
         int fd = pidfd_open_(pid);
         if (fd < 0) {
             sb_printf(out, "cutover: no such process %d\n", pid);
-            goto done;
+            return job_end(j, 1);
         }
-        tfd[ntfd++] = fd;
+        j->tfd[j->ntfd++] = fd;
         pid_t pp = proc_ppid(pid);
         if (pp < 0 || !pinned_alive(fd, pid)) {
             sb_printf(out, "cutover: no such process %d\n", pid);
-            goto done;
+            return job_end(j, 1);
         }
         if (pp == self) {
             sb_printf(out, "cutover: %d is already a child of focker, skipping\n", pid);
-            close(tfd[--ntfd]);
+            close(j->tfd[--j->ntfd]);
             continue;
         }
         if (!proc_is_descendant(pid, self)) {
             sb_printf(out, "cutover: %d is not in family %s (focker can only adopt its own descendants;"
                            " start the old parent with 'focker run')\n", pid, f->name);
-            goto done;
+            return job_end(j, 1);
         }
         v[keep] = pid;
         op[keep] = pp;
         keep++;
     }
-    nv = keep;
-    if (nv == 0) {
-        rc = 0;
-        goto done;
-    }
+    int nv = j->nv = keep;
+    if (nv == 0)
+        return job_end(j, 0);
     for (int i = 0; i < nv; i++) {
-        int j = index_of(v, nv, op[i]);
-        if (j >= 0) {
+        int k = index_of(v, nv, op[i]);
+        if (k >= 0) {
             sb_printf(out, "cutover: %d is both a target and the parent of %d; cut over one generation at a time\n",
-                      v[j], v[i]);
-            goto done;
+                      v[k], v[i]);
+            return job_end(j, 1);
         }
     }
 
-    pid_t parents[MAX_PIDS];
-    int nparents = 0;
+    pid_t *parents = j->parents;
     for (int i = 0; i < nv; i++)
-        if (index_of(parents, nparents, op[i]) < 0)
-            parents[nparents++] = op[i];
+        if (index_of(parents, j->nparents, op[i]) < 0)
+            parents[j->nparents++] = op[i];
+    int nparents = j->nparents;
 
-    /* bystanders: the old parents' other children get orphaned too */
-    pid_t by[MAX_PIDS];
-    int nby = 0;
     for (int k = 0; k < nparents; k++) {
         pid_t kids[MAX_PIDS];
         int nk = proc_children(parents[k], kids, MAX_PIDS);
-        for (int i = 0; i < nk && nby < MAX_PIDS; i++)
+        for (int i = 0; i < nk && j->nby < MAX_PIDS; i++)
             if (index_of(v, nv, kids[i]) < 0)
-                by[nby++] = kids[i];
+                j->by[j->nby++] = kids[i];
     }
 
     /* forget held fds that have since been closed, so their slots can be reused */
@@ -492,7 +546,7 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
     if (f->nstolen + nplan > MAX_STOLEN) {
         sb_printf(out, "cutover: taking %s%d more fd%s would hold more than %d (holding %d); nothing was changed\n",
                   nplan > MAX_STOLEN ? "at least " : "", nplan, nplan == 1 ? "" : "s", MAX_STOLEN, f->nstolen);
-        goto done;
+        return job_end(j, 1);
     }
 
     if (o->dry_run) {
@@ -500,9 +554,9 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
             sb_printf(out, "plan: adopt %d (%s) from %d (%s)\n", v[i], cmd_of(v[i]), op[i], cmd_of(op[i]));
         for (int i = 0; i < nplan; i++)
             plan_line(out, "plan: take over", &plan[i]);
-        for (int i = 0; i < nby; i++)
+        for (int i = 0; i < j->nby; i++)
             sb_printf(out, "plan: %d (%s) is also a child of the old parent and will be adopted unfrozen\n",
-                      by[i], cmd_of(by[i]));
+                      j->by[i], cmd_of(j->by[i]));
         for (int k = 0; k < nparents; k++) {
             if (o->sig)
                 sb_printf(out, "plan: send %s to old parent %d\n", signame(o->sig), parents[k]);
@@ -510,8 +564,7 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
                 sb_printf(out, "plan: wait for old parent %d to exit\n", parents[k]);
         }
         sb_printf(out, "plan: freeze=%s, timeout=%.1fs\n", freeze_name(o->freeze), o->timeout_ms / 1000.0);
-        rc = 0;
-        goto done;
+        return job_end(j, 0);
     }
 
     /* test-only: widen the window between validation and freeze */
@@ -519,30 +572,23 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
     if (stall)
         sleep_ms(atol(stall));
 
-    int stolen_base = f->nstolen;
-    int pidfds[MAX_PIDS];
-    for (int k = 0; k < nparents; k++)
-        pidfds[k] = -1;
-    struct frozen *z = calloc((size_t)nv, sizeof *z);
-    if (!z) {
-        sb_printf(out, "cutover: out of memory\n");
-        goto done;
-    }
+    j->stolen_base = f->nstolen;
+    struct frozen *z = j->z;
 
     /* 1. freeze. The pidfd check after each step proves the process that
      * was validated and the one that got frozen are the same, not a reuse. */
     for (int i = 0; i < nv; i++) {
         z[i].pid = v[i];
-        if (!pinned_alive(tfd[i], v[i])) {
+        if (!pinned_alive(j->tfd[i], v[i])) {
             sb_printf(out, "cutover: %d exited before it could be frozen\n", v[i]);
-            goto rollback;
+            return job_rollback(j, out);
         }
         z[i].pending_before = proc_sigpending(v[i]);
         if (freeze(&z[i], o->freeze, out) < 0)
-            goto rollback;
-        if (!pinned_alive(tfd[i], v[i])) {
+            return job_rollback(j, out);
+        if (!pinned_alive(j->tfd[i], v[i])) {
             sb_printf(out, "cutover: %d exited before it could be frozen\n", v[i]);
-            goto rollback;
+            return job_rollback(j, out);
         }
         if (o->freeze == FREEZE_PTRACE)
             sb_printf(out, "cutover: froze %d (%s, %d thread%s, ptrace)\n", v[i], cmd_of(v[i]), z[i].ntids,
@@ -553,15 +599,15 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
 
     /* 2. take over the old parents' ends of the child's pipes and sockets */
     for (int k = 0; k < nparents; k++) {
-        pidfds[k] = pidfd_open_(parents[k]);
-        if (pidfds[k] < 0) {
+        j->pidfds[k] = pidfd_open_(parents[k]);
+        if (j->pidfds[k] < 0) {
             sb_printf(out, "cutover: cannot open old parent %d: %s\n", parents[k], strerror(errno));
-            goto rollback;
+            return job_rollback(j, out);
         }
     }
     for (int i = 0; i < nplan; i++) {
         const struct plan_fd *p = &plan[i];
-        int nfd = pidfd_getfd_(pidfds[index_of(parents, nparents, p->parent)], p->parent_fd);
+        int nfd = pidfd_getfd_(j->pidfds[index_of(parents, nparents, p->parent)], p->parent_fd);
         if (nfd < 0) {
             sb_printf(out, "cutover: cannot take fd %d of %d: %s\n", p->parent_fd, p->parent, strerror(errno));
             continue;
@@ -591,53 +637,44 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
         plan_line(out, "cutover: took over", &shown);
     }
 
-    /* 3. cut ties */
+    /* 3. cut ties; the wait itself is cutover_step's */
     for (int k = 0; k < nparents; k++) {
         if (!o->sig) {
             sb_printf(out, "cutover: waiting for old parent %d to exit\n", parents[k]);
-        } else if (pidfd_signal_(pidfds[k], o->sig) < 0 && errno != ESRCH) {
+        } else if (pidfd_signal_(j->pidfds[k], o->sig) < 0 && errno != ESRCH) {
             sb_printf(out, "cutover: cannot signal old parent %d: %s\n", parents[k], strerror(errno));
-            goto rollback;
+            return job_rollback(j, out);
         } else {
             sb_printf(out, "cutover: sent %s to old parent %d\n", signame(o->sig), parents[k]);
         }
     }
-    long t0 = now_ms();
-    bool moved = false;
-    for (;;) {
-        moved = true;
-        for (int i = 0; i < nv; i++)
-            if (proc_ppid(v[i]) == op[i]) {
-                moved = false;
-                break;
-            }
-        if (moved || now_ms() - t0 > o->timeout_ms)
-            break;
-        struct pollfd pfd[MAX_PIDS];
-        for (int k = 0; k < nparents; k++)
-            pfd[k] = (struct pollfd){ .fd = pidfds[k], .events = POLLIN };
-        poll(pfd, (nfds_t)nparents, 20);
-    }
-    if (!moved) {
-        sb_printf(out, "cutover: timed out after %.1fs: the old parent is still alive; nothing was moved\n",
-                  o->timeout_ms / 1000.0);
-        goto rollback;
-    }
-    long dt = now_ms() - t0;
+    j->t0 = now_ms();
+    *job = j;
+    return CUTOVER_PENDING;
+}
+
+/* steps 4-6, once every target has left its old parent */
+static int job_finish(struct cutover_job *j, long dt, struct sbuf *out)
+{
+    struct family *f = j->f;
+    const struct cutover_opts *o = &j->o;
+    pid_t self = getpid();
+    pid_t *v = j->v;
+    struct frozen *z = j->z;
 
     /* 4. verify */
     int failures = 0;
-    for (int i = 0; i < nv; i++) {
+    for (int i = 0; i < j->nv; i++) {
         pid_t pp = proc_ppid(v[i]);
         if (pp == self) {
             struct member *m = family_member(f, v[i], true);
             if (m) {
                 m->origin = 'a';
-                m->old_ppid = op[i];
+                m->old_ppid = j->op[i];
                 m->alive = true;
                 proc_cmdline(v[i], m->cmd, sizeof m->cmd);
             }
-            sb_printf(out, "cutover: adopted %d (ppid %d -> %d) in %ld ms\n", v[i], op[i], self, dt);
+            sb_printf(out, "cutover: adopted %d (ppid %d -> %d) in %ld ms\n", v[i], j->op[i], self, dt);
         } else if (pp < 0 || proc_state(v[i]) == 'Z') {
             sb_printf(out, "cutover: %d died during the cutover (PR_SET_PDEATHSIG=SIGKILL cannot be intercepted)\n",
                       v[i]);
@@ -649,7 +686,7 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
     }
 
     /* 5. thaw, swallowing whatever was aimed at the child while it was frozen */
-    for (int i = 0; i < nv; i++) {
+    for (int i = 0; i < j->nv; i++) {
         if (!z[i].frozen)
             continue;
         uint64_t now = proc_sigpending(v[i]);
@@ -672,39 +709,43 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
     }
 
     /* 6. report bystanders */
-    for (int i = 0; i < nby; i++) {
-        if (proc_ppid(by[i]) != self)
+    for (int i = 0; i < j->nby; i++) {
+        pid_t b = j->by[i];
+        if (proc_ppid(b) != self)
             continue;
-        struct member *m = family_member(f, by[i], true);
+        struct member *m = family_member(f, b, true);
         if (m) {
             m->origin = 'a';
             m->alive = true;
-            proc_cmdline(by[i], m->cmd, sizeof m->cmd);
-            for (int k = 0; k < nparents; k++)
-                m->old_ppid = parents[k]; /* best effort when several parents were cut */
+            proc_cmdline(b, m->cmd, sizeof m->cmd);
+            for (int k = 0; k < j->nparents; k++)
+                m->old_ppid = j->parents[k]; /* best effort when several parents were cut */
         }
-        sb_printf(out, "cutover: also adopted %d (%s), orphaned by the same exit\n", by[i], cmd_of(by[i]));
+        sb_printf(out, "cutover: also adopted %d (%s), orphaned by the same exit\n", b, cmd_of(b));
     }
-    rc = failures ? 1 : 0;
-    goto out;
+    return job_end(j, failures ? 1 : 0);
+}
 
-rollback:
-    for (int i = f->nstolen - 1; i >= stolen_base; i--) {
-        close(f->stolen[i].fd);
-        if (f->stolen[i].logfd >= 0)
-            close(f->stolen[i].logfd);
-    }
-    f->nstolen = stolen_base;
-    for (int i = 0; i < nv; i++)
-        thaw(&z[i], o->freeze, 0, out);
-    sb_printf(out, "cutover: rolled back; processes left with their original parents\n");
-out:
-    for (int k = 0; k < nparents; k++)
-        if (pidfds[k] >= 0)
-            close(pidfds[k]);
-    free(z);
-done:
-    for (int i = 0; i < ntfd; i++)
-        close(tfd[i]);
-    return rc;
+int cutover_step(struct cutover_job *j, struct sbuf *out)
+{
+    bool moved = true;
+    for (int i = 0; i < j->nv; i++)
+        if (proc_ppid(j->v[i]) == j->op[i]) {
+            moved = false;
+            break;
+        }
+    long dt = now_ms() - j->t0;
+    if (moved)
+        return job_finish(j, dt, out);
+    if (dt <= j->o.timeout_ms)
+        return CUTOVER_PENDING;
+    sb_printf(out, "cutover: timed out after %.1fs: the old parent is still alive; nothing was moved\n",
+              j->o.timeout_ms / 1000.0);
+    return job_rollback(j, out);
+}
+
+int cutover_cancel(struct cutover_job *j, const char *why, struct sbuf *out)
+{
+    sb_printf(out, "cutover: cancelled by %s\n", why);
+    return job_rollback(j, out);
 }

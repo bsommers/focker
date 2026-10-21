@@ -381,7 +381,13 @@ static int do_cutover(char **args, int nargs, struct sbuf *out)
             return 1;
         }
     }
-    int rc = cutover(&fam, &o, pids, npids, out);
+    struct cutover_job *job;
+    int rc = cutover_start(&fam, &o, pids, npids, out, &job);
+    while (rc == CUTOVER_PENDING) {
+        rc = cutover_step(job, out);
+        if (rc == CUTOVER_PENDING)
+            sleep_ms(20);
+    }
     if (!o.dry_run)
         logmsg("cutover %s", rc == 0 ? "succeeded" : "failed");
     return rc;

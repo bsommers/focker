@@ -110,7 +110,16 @@ struct cutover_opts {
 };
 int         parse_freeze(const char *s);
 const char *freeze_name(enum freeze_method m);
-int cutover(struct family *f, const struct cutover_opts *o, const pid_t *pids, int npids, struct sbuf *out);
+/* A cutover is a job: cutover_start runs it up to the wait for the old parents,
+ * and the caller steps it (non-blocking) until it ends. Each returns 0 or 1 once
+ * the cutover has ended (and the job is freed), else CUTOVER_PENDING. */
+#define CUTOVER_PENDING (-2)
+struct cutover_job;
+int  cutover_start(struct family *f, const struct cutover_opts *o, const pid_t *pids, int npids, struct sbuf *out,
+                   struct cutover_job **job);
+int  cutover_step(struct cutover_job *job, struct sbuf *out);
+int  cutover_cancel(struct cutover_job *job, const char *why, struct sbuf *out); /* rolls back; returns 1 */
+bool cutover_owns(const struct cutover_job *job, pid_t pid);                      /* pid is one of its targets */
 
 /* supervisor.c */
 int supervisor_run(const char *name, const char *dir, char **argv, bool detached, bool linger, int ready_fd);
