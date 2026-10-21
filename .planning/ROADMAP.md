@@ -63,7 +63,10 @@ Plans:
   1. During a `--wait -t 5` cutover, a second child's pipe keeps draining (its log grows) and `inspect` answers
   2. A second cutover during the first gets `busy` and exit 1
   3. Every v1.0 cutover check still passes, under `make ci`
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 07-01-PLAN.md — cutover as a job, stepped from the poll loop, busy refusals, reaper/signal safety (steps in docs/superpowers/plans/2026-10-20-async-cutover.md)
 
 ### Phase 8: CRIU adoption
 **Goal**: A process tree started outside focker can be brought under a family
@@ -83,5 +86,5 @@ Plans:
 | 1-4 | v1.0 | 5/5 | Complete | 2026-10-20 |
 | 5. Fd control and JSON | v2.0 | 1/1 | Complete | 2026-10-20 |
 | 6. Loopback TCP takeover | v2.0 | 1/1 | Complete | 2026-10-20 |
-| 7. Async cutover | v2.0 | 0/TBD | Not started | - |
+| 7. Async cutover | v2.0 | 0/1 | Planned | - |
 | 8. CRIU adoption | v2.0 | 0/TBD | Not started | - |

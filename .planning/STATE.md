@@ -24,8 +24,8 @@ See: .planning/PROJECT.md (updated 2026-10-20)
 
 Milestone: v2.0 Reach (v1.0 Hardening shipped 2026-10-20, see .planning/MILESTONES.md)
 Phase: 7 (Async cutover), of phases 5-8
-Plan: 0 of TBD in current phase
-Status: Not planned
+Plan: 0 of 1 in current phase
+Status: Planned (07-01-PLAN.md; steps in docs/superpowers/plans/2026-10-20-async-cutover.md)
 Last activity: 2026-10-20 — Phase 6 complete (loopback TCP takeover, FD-01)
 
 Progress: [█████░░░░░] 50% (v2.0)
@@ -86,5 +86,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-10-20
-Stopped at: Phase 6 complete; Phase 7 not planned
+Stopped at: Phase 7 planned, awaiting review
 Resume file: None
