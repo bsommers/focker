@@ -1,93 +1,80 @@
 # Roadmap: focker
 
+## Milestones
+
+- ✅ **v1.0 Hardening** - Phases 1-4 (shipped 2026-10-20). See `.planning/milestones/v1.0-ROADMAP.md`
+- 🚧 **v2.0 Reach** - Phases 5-8 (planned)
+
 ## Overview
 
-Milestone v1.0, Hardening. focker works and is documented (commit 3619015, 71 passing integration checks). This milestone makes it trustworthy:
-1. fix the known edge cases in the cutover engine
-2. test the paths nobody has exercised yet
-3. put sanitizers and CI behind every change
-4. trim the `/proc` scanning cost
+Milestone v2.0, Reach. v1.0 made focker trustworthy. v2.0 makes it reach further:
+1. small user-facing controls first: release one held fd, and JSON output
+2. loopback TCP takeover, the most-asked-for fd kind after pipes and unix sockets
+3. an async cutover, so the supervisor keeps draining and answering during a cutover
+4. adopting processes that were never started under focker, via CRIU (blocked on a decision)
 
-There are no new user-facing features.
+Phases are ordered so each one ships on its own. The riskiest refactor (async) comes after the features
+whose tests it then has to keep passing.
 
 ## Phases
 
 **Phase Numbering:**
-- Integer phases (1, 2, 3): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
+- Integer phases continue from v1.0 (5, 6, ...)
+- Decimal phases (5.1, 5.2): Urgent insertions (marked with INSERTED)
 
-Decimal phases appear between their surrounding integers in numeric order.
-
-- [x] **Phase 1: Cutover correctness** - Fix tracee reaping, group-stop preservation, pidfd-first validation, re-sent signal reporting
-- [x] **Phase 2: Test coverage** - Cover every untested path in TESTING.md, add parser unit tests
-- [x] **Phase 3: Sanitizers and CI** - ASan/UBSan and analyzer builds, CI running the suite
-- [x] **Phase 4: Efficiency** - Cheaper child enumeration, measured idle cost, documented limits
+- [ ] **Phase 5: Fd control and JSON** - `focker release`, `ps --json`, `inspect --json`
+- [ ] **Phase 6: Loopback TCP takeover** - inet_diag peer matching for TCP between old parent and target
+- [ ] **Phase 7: Async cutover** - non-blocking cutover inside the poll loop
+- [ ] **Phase 8: CRIU adoption** - adopt trees not started under focker (needs a decision first)
 
 ## Phase Details
 
-### Phase 1: Cutover correctness
-**Goal**: The four known cutover edge cases in CONCERNS.md are fixed, each with a regression test
-**Depends on**: Nothing (first phase)
-**Requirements**: REL-01, REL-02, REL-03, REL-04
+### Phase 5: Fd control and JSON
+**Goal**: Users can let go of a single held fd, and scripts can read focker's state without parsing columns
+**Depends on**: v1.0
+**Requirements**: FD-02, OUT-01
 **Success Criteria** (what must be TRUE):
-  1. If a target is killed mid-cutover, `focker inspect` shows it with its real exit status
-  2. If a target is SIGSTOP'd during the cutover, it is still stopped (`T`) after thaw
-  3. Cutover targets are held by pidfd from validation onwards, and a test shows that a vanished target is reported, not mistaken for another process
-  4. A re-sent, already-pending signal shows up in the transcript
-**Plans**: 1 plan
+  1. After `focker release NAME FD` on a held `pipe-w`, the child reads EOF on its stdin (integration test with a child that exits on EOF)
+  2. Releasing a drained read end closes its log, and `inspect` stops listing it; an unknown FD exits 1
+  3. `ps --json` and `inspect --json` parse with `python3 -m json.tool`, and their keys are documented in USAGE
+**Plans**: TBD
 
-Plans:
-- [x] 01-01-PLAN.md — REL-01..04 fixes with regression tests
-
-### Phase 2: Test coverage
-**Goal**: Every gap listed in .planning/codebase/TESTING.md has a test
-**Depends on**: Phase 1
-**Requirements**: TST-01, TST-02, TST-03, TST-04, TST-05, TST-06
+### Phase 6: Loopback TCP takeover
+**Goal**: A child talking to its old parent over loopback TCP keeps its connection through a cutover
+**Depends on**: Phase 5
+**Requirements**: FD-01
 **Success Criteria** (what must be TRUE):
-  1. `make test` covers `--no-drain`, `--no-suppress`, `--wait`, `logs -f`, handover exec-failure recovery, long-path sockets and limit edges
-  2. `make unit` runs parser tests for procfs.c and unixdiag.c
-  3. The suite still passes three runs in a row (no flakes)
-**Plans**: 2 plans
+  1. A fixture where the old parent and the child share a 127.0.0.1 and a ::1 connection: after the cutover the child's socket is still connected and its output is drained to a log
+  2. `--dry-run` lists the connection as `tcp` with both endpoints
+  3. Non-loopback and listening sockets are never taken
+**Plans**: TBD
 
-Plans:
-- [x] 02-01-PLAN.md — integration coverage for TST-01..05, plus the limit bugs it exposed
-- [x] 02-02-PLAN.md — `make unit`: procfs fixture tests and live sock_diag (TST-06)
-
-### Phase 3: Sanitizers and CI
-**Goal**: Memory and UB errors and analyzer findings are caught automatically on every push
-**Depends on**: Phase 2
-**Requirements**: BLD-01, BLD-02, BLD-03
+### Phase 7: Async cutover
+**Goal**: The supervisor never stops draining or answering read-only requests while a cutover is in flight
+**Depends on**: Phase 6
+**Requirements**: ASYNC-01
 **Success Criteria** (what must be TRUE):
-  1. `make asan test` passes with no sanitizer reports
-  2. `make lint` exits 0
-  3. The CI workflow file runs both on push, and it is verified with a local runner (`act`) or a first push
-     (changed by the user: everything local, workflow left disabled; verified with `make ci`)
-**Plans**: 1 plan
+  1. During a `--wait -t 5` cutover, a second child's pipe keeps draining (its log grows) and `inspect` answers
+  2. A second cutover during the first gets `busy` and exit 1
+  3. Every v1.0 cutover check still passes, under `make ci`
+**Plans**: TBD
 
-Plans:
-- [x] 03-01-PLAN.md — make asan / lint / ci, disabled workflow in ci/
-
-### Phase 4: Efficiency
-**Goal**: Supervisor work per request and per idle tick is bounded and documented
-**Depends on**: Phase 3
-**Requirements**: PERF-01, PERF-02
+### Phase 8: CRIU adoption
+**Goal**: A process tree started outside focker can be brought under a family
+**Depends on**: Phase 7
+**Requirements**: CRIU-01
+**Blocked on**: a user decision. CRIU needs root or `CAP_CHECKPOINT_RESTORE`, which conflicts with the unprivileged constraint unless the capability sits on the `criu` binary, not on focker. Options: (a) focker runs a `criu` that the user has granted the capability; (b) focker only prints the dump/restore commands; (c) drop CRIU-01
 **Success Criteria** (what must be TRUE):
-  1. Child enumeration avoids the full `/proc` scan when `/proc/PID/task/*/children` exists, with identical results (tested both ways)
-  2. Idle supervisor CPU and wakeups are measured and written into docs/ARCHITECTURE.md
-  3. Member-history and held-fd limits are documented in USAGE and LIMITATIONS
-**Plans**: 1 plan
-
-Plans:
-- [x] 04-01-PLAN.md — task/*/children child lookup, idle-cost measurement, limits docs (steps in docs/superpowers/plans/2026-10-20-efficiency.md)
+  1. Decided and recorded in PROJECT.md Key Decisions before planning
+  2. (if a or b) A tree started outside focker ends up as members of a family, with its pipes intact, in a test that is skipped without criu
+**Plans**: TBD
 
 ## Progress
 
-**Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4
-
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. Cutover correctness | 1/1 | Complete | 2026-10-20 |
-| 2. Test coverage | 2/2 | Complete | 2026-10-20 |
-| 3. Sanitizers and CI | 1/1 | Complete | 2026-10-20 |
-| 4. Efficiency | 1/1 | Complete | 2026-10-20 |
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|----------------|--------|-----------|
+| 1-4 | v1.0 | 5/5 | Complete | 2026-10-20 |
+| 5. Fd control and JSON | v2.0 | 0/TBD | Not started | - |
+| 6. Loopback TCP takeover | v2.0 | 0/TBD | Not started | - |
+| 7. Async cutover | v2.0 | 0/TBD | Not started | - |
+| 8. CRIU adoption | v2.0 | 0/TBD | Blocked | - |

@@ -22,22 +22,22 @@ A cutover must never leave a child worse off. Either the child ends up adopted, 
 - ✓ `ps [-a]`, `tree`, `inspect`, `logs [-f] [-p PID]`, `freeze`/`thaw`, `stop`, `rm`. Exit codes 0/1/2. `--help` everywhere
 - ✓ Documentation: README, docs/USAGE, ARCHITECTURE, HOWTO, LIMITATIONS
 
+- ✓ v1.0 Hardening (2026-10-20): cutover edge cases (REL-01..04), test coverage and parser unit tests (TST-01..06), sanitizer/analyzer builds and a disabled CI workflow (BLD-01..03), `task/*/children` child lookup and measured idle cost (PERF-01..02). Archive: `.planning/milestones/`
+
 ### Active
 
-<!-- Milestone v1.0: Hardening. -->
+<!-- Milestone v2.0: Reach. -->
 
-- [ ] Fix the known correctness edge cases in the cutover engine (tracee reaping, group-stop preservation, pidfd-first validation)
-- [ ] Close the integration-test gaps listed in .planning/codebase/TESTING.md and add parser-level unit tests
-- [x] Add sanitizer and static-analysis builds and CI that runs the suite (CI written but disabled until there is a remote)
-- [ ] Cut per-request `/proc` scan cost and make the member-history limits explicit
+- [ ] Release a single held fd, and JSON output for `ps`/`inspect` (FD-02, OUT-01)
+- [ ] Take over loopback TCP connections between old parent and child (FD-01)
+- [ ] Run the cutover as a non-blocking state machine in the poll loop (ASYNC-01)
+- [ ] Adopt processes not started under focker via CRIU, if the privilege question is settled (CRIU-01)
 
 ### Out of Scope
 
-- Async, non-blocking cutover state machine. Deferred to a later milestone, because the current synchronous model is correct and cutovers take milliseconds
-- More fd kinds (TCP/UDP via inet_diag, ptys) and a `release` command. Deferred, since this milestone is hardening, not features
-- CRIU integration for adopting processes never started under focker. Deferred, as it's a different trust and privilege model (needs CAP_CHECKPOINT_RESTORE)
-- `--json` output. Deferred
 - Non-Linux platforms. Never: the tool is built on Linux-only kernel interfaces
+- Privileges on focker itself. CRIU-01 may only use privilege held by the `criu` binary
+- Ptys, eventfds, memfds, and moving pgrp/session/cgroup. No demand yet
 
 ## Context
 
@@ -60,8 +60,11 @@ A cutover must never leave a child worse off. Either the child ends up adopted, 
 | ptrace (SEIZE+INTERRUPT) is the default freeze | Invisible to child and parent; lets mid-cutover signals be swallowed | ✓ Good |
 | Handover by execve in place | Keeps the PID, so the new program becomes the real parent | ✓ Good |
 | Take over only *linked* fds (opposite pipe ends, unix peers) | Inherited duplicates don't matter, and stealing a shared read end would race the child | ✓ Good |
-| Single-threaded synchronous supervisor | Simplest correct design; cutovers take milliseconds | ⚠️ Revisit (async milestone) |
-| GSD artifacts hand-written (no Claude Code GSD install) | User chose artifacts only | — Pending |
+| Single-threaded synchronous supervisor | Simplest correct design; cutovers take milliseconds | ⚠️ Revisit in v2.0 Phase 7 |
+| GSD artifacts hand-written (no Claude Code GSD install) | User chose artifacts only | ✓ Good (validated with gsd-tools through v1.0) |
+| Two sanitizer builds, not one combined | UBSan ignores `log_path` when combined with ASan | ✓ Good |
+| `handover` replies `exec`, then EOF or `err` | The client must learn whether execve worked | ✓ Good |
+| Public repo github.com/bsommers/focker, CI disabled in `ci/` | User request | — Pending (CI) |
 
 ---
-*Last updated: 2026-10-20 after brownfield onboarding*
+*Last updated: 2026-10-20 after milestone v1.0, starting v2.0*

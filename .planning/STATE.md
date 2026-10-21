@@ -1,12 +1,14 @@
 ---
 gsd_state_version: '1.0'
-status: complete
+milestone: v2.0
+milestone_name: Reach
+status: planning
 progress:
   total_phases: 4
-  completed_phases: 4
-  total_plans: 5
-  completed_plans: 5
-  percent: 100
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -16,16 +18,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-20)
 
 **Core value:** A cutover must never leave a child worse off. Either the child ends up adopted, running, with its I/O intact, or everything rolls back and it stays exactly where it was.
-**Current focus:** Milestone v1.0 Hardening complete
+**Current focus:** Milestone v2.0 Reach, Phase 5: Fd control and JSON
 
 ## Current Position
 
-Phase: 4 of 4 (Efficiency) — complete
-Plan: 1 of 1 in current phase
-Status: Milestone complete
-Last activity: 2026-10-20 — Phase 4 complete (task/*/children lookup; idle CPU 11.3 ms/s → 52.6 µs/s)
+Milestone: v2.0 Reach (v1.0 Hardening shipped 2026-10-20, see .planning/MILESTONES.md)
+Phase: 5 (Fd control and JSON), first of phases 5-8
+Plan: 0 of TBD in current phase
+Status: Ready to plan
+Last activity: 2026-10-20 — v1.0 archived; v2.0 requirements and roadmap written
 
-Progress: [██████████] 100%
+Progress: [░░░░░░░░░░] 0% (v2.0)
 
 ## Performance Metrics
 
@@ -67,6 +70,8 @@ None yet.
 
 ### Blockers/Concerns
 
+- Phase 8 (CRIU-01) needs a decision: capability on the `criu` binary, print-only commands, or drop it (ROADMAP Phase 8).
+
 - The `/gsd-*` slash commands are unavailable in Claude Code until gsd-core is installed for it (`npx @opengsd/gsd-core@latest`).
 
 ## Deferred Items
@@ -78,5 +83,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-10-20
-Stopped at: Milestone v1.0 complete; next is choosing the v2 milestone (or the CONCERNS.md follow-ups)
+Stopped at: v2.0 roadmap written; next is planning Phase 5. Phase 8 (CRIU) is blocked on a user decision
 Resume file: None
