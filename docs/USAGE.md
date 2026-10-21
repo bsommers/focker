@@ -196,6 +196,18 @@ focker stop [-s SIG] NAME
 
 Sends SIG (default `TERM`) to the supervisor's direct children and clears `--linger`. The supervisor exits once its last child is gone.
 
+## focker release
+
+```
+focker release NAME FD...
+```
+
+Closes fds that focker holds for adopted children. FD is focker's own fd number: the `FD` column of `inspect`, `held_fds[].fd` in `inspect --json`, or the first field of a `FOCKER_FDS` entry. Each one prints `release: closed KIND fd N (child PID fd M)`.
+- Releasing a `pipe-w` is how you send a child EOF on the stdin the old parent used to write to.
+- Releasing a drained `pipe-r` or `unix` fd closes its log as well. If nobody else holds that end, the child gets `EPIPE`/`SIGPIPE` on its next write.
+- An FD focker doesn't hold prints `release: focker holds no fd N`. The other FDs are still released, and the command exits 1.
+- A missing or non-numeric FD is a usage error (exit 2).
+
 ## focker rm
 
 ```

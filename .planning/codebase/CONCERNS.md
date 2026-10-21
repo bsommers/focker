@@ -31,9 +31,10 @@ last_mapped_at: 2026-10-20T03:34:23Z
 ## Missing Features (from docs/LIMITATIONS.md)
 
 - TCP/UDP peer matching (`inet_diag`), pty handling, cgroup migration, pgrp/session moves.
-- A way to release a single held fd (e.g. to send EOF to a child's stdin) without a handover.
+- ~~A way to release a single held fd~~: `focker release` (Phase 5).
+- ~~Drains after a request used stale poll indices~~: fixed in Phase 5. A cutover or `release` can close or move held-fd slots, and drained fds are blocking, so a stale index could have blocked the supervisor in `read()`. The loop now skips draining in any round that served a request.
 - CRIU integration for processes not started under focker.
-- Machine-readable output (`--json`) for `ps`/`inspect`.
+- ~~Machine-readable output~~: `ps --json`, `inspect --json` (Phase 5).
 
 ## Test Coverage Gaps
 

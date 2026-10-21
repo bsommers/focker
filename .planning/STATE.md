@@ -5,10 +5,10 @@ milestone_name: Reach
 status: planning
 progress:
   total_phases: 4
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
+  percent: 25
 ---
 
 # Project State
@@ -18,17 +18,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-20)
 
 **Core value:** A cutover must never leave a child worse off. Either the child ends up adopted, running, with its I/O intact, or everything rolls back and it stays exactly where it was.
-**Current focus:** Milestone v2.0 Reach, Phase 5: Fd control and JSON
+**Current focus:** Milestone v2.0 Reach, Phase 6: Loopback TCP takeover
 
 ## Current Position
 
 Milestone: v2.0 Reach (v1.0 Hardening shipped 2026-10-20, see .planning/MILESTONES.md)
-Phase: 5 (Fd control and JSON), first of phases 5-8
-Plan: 0 of 1 in current phase
-Status: Planned (05-01-PLAN.md; steps in docs/superpowers/plans/2026-10-20-fd-control-and-json.md)
-Last activity: 2026-10-20 — v1.0 archived; v2.0 requirements and roadmap written
+Phase: 6 (Loopback TCP takeover), of phases 5-8
+Plan: 0 of TBD in current phase
+Status: Ready to plan
+Last activity: 2026-10-20 — v1.0.0 tagged; Phase 5 complete (release, ps/inspect --json)
 
-Progress: [░░░░░░░░░░] 0% (v2.0)
+Progress: [██▌░░░░░░░] 25% (v2.0)
 
 ## Performance Metrics
 
@@ -83,5 +83,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-10-20
-Stopped at: Phase 5 planned, awaiting review; Phase 8 (CRIU) decided: option (a)
+Stopped at: Phase 5 complete; next is planning Phase 6
 Resume file: None

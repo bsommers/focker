@@ -6,6 +6,17 @@ All notable changes to focker are recorded here. The format follows
 (commands, options, exit codes, `cutover:` transcript lines, `FOCKER_*`
 variables, the control protocol in docs/USAGE.md) is the public API.
 
+## [Unreleased]
+
+### Added
+- `focker release NAME FD...` closes held fds, for example to send a child EOF on the stdin its old parent held.
+- `ps --json` and `inspect --json`. Keys are documented in docs/USAGE.md. Strings are always valid UTF-8.
+- Test fixtures: `oldparent -I` (holds each child's stdin), `ticker -e` (exits 5 on stdin EOF).
+
+### Fixed
+- After serving a request, the supervisor could drain held fds through stale slot indices, and drained fds
+  are blocking.
+
 ## [v1.0.0] - 2026-10-20
 
 First release: reparent running Linux processes onto a new parent ("think

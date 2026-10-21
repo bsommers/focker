@@ -22,7 +22,7 @@ whose tests it then has to keep passing.
 - Integer phases continue from v1.0 (5, 6, ...)
 - Decimal phases (5.1, 5.2): Urgent insertions (marked with INSERTED)
 
-- [ ] **Phase 5: Fd control and JSON** - `focker release`, `ps --json`, `inspect --json`
+- [x] **Phase 5: Fd control and JSON** - `focker release`, `ps --json`, `inspect --json`
 - [ ] **Phase 6: Loopback TCP takeover** - inet_diag peer matching for TCP between old parent and target
 - [ ] **Phase 7: Async cutover** - non-blocking cutover inside the poll loop
 - [ ] **Phase 8: CRIU adoption** - adopt trees not started under focker, via a capability-granted `criu`
@@ -40,7 +40,7 @@ whose tests it then has to keep passing.
 **Plans**: 1 plan
 
 Plans:
-- [ ] 05-01-PLAN.md — sb_json_str, inspect/ps --json, focker release (steps in docs/superpowers/plans/2026-10-20-fd-control-and-json.md)
+- [x] 05-01-PLAN.md — sb_json_str, inspect/ps --json, focker release (steps in docs/superpowers/plans/2026-10-20-fd-control-and-json.md)
 
 ### Phase 6: Loopback TCP takeover
 **Goal**: A child talking to its old parent over loopback TCP keeps its connection through a cutover
@@ -78,7 +78,7 @@ Plans:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1-4 | v1.0 | 5/5 | Complete | 2026-10-20 |
-| 5. Fd control and JSON | v2.0 | 0/TBD | Not started | - |
+| 5. Fd control and JSON | v2.0 | 1/1 | Complete | 2026-10-20 |
 | 6. Loopback TCP takeover | v2.0 | 0/TBD | Not started | - |
 | 7. Async cutover | v2.0 | 0/TBD | Not started | - |
 | 8. CRIU adoption | v2.0 | 0/TBD | Not started | - |

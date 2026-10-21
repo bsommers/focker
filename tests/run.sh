@@ -366,6 +366,35 @@ else
     printf '  skip  json (needs python3)\n'
 fi
 
+echo "release"
+held_fd() { "$F" inspect "$1" | awk -v k="$2" '$2 == k {print $1; exit}'; }   # NAME KIND -> focker's fd
+start --linger rel "$B/oldparent" -I 1 -- -i 50 -e
+SUP=$(sup_of rel) T=$(ticker_of rel)
+out=$("$F" cutover rel "$T")
+check "the cutover takes over stdin and stdout" bash -c "grep -q 'took over pipe-w' <<<'$out' && grep -q 'took over pipe-r' <<<'$out'"
+FDW=$(held_fd rel pipe-w) FDR=$(held_fd rel pipe-r)
+out=$("$F" release rel "$FDW"); rc=$?
+check "release closes a held stdin" test $rc -eq 0
+check "release says what it closed" grep -q "release: closed pipe-w fd $FDW (child $T fd 0)" <<<"$out"
+check "the child sees EOF on stdin" wait_for bash -c "'$F' inspect rel | grep -Eq '^  $T .*exited 5'"
+check "inspect stops listing a released fd" lacks " pipe-w " "$("$F" inspect rel)"
+wait_for bash -c "! '$F' inspect rel | grep -q ' pipe-r '"
+expect_rc "releasing an fd that EOF already closed exits 1" 1 "$F" release rel "$FDR"
+expect_rc "releasing an unknown fd exits 1" 1 "$F" release rel 9999
+check "the unknown fd is named" grep -q "focker holds no fd 9999" <<<"$("$F" release rel 9999 2>&1)"
+expect_rc "release needs an fd" 2 "$F" release rel
+expect_rc "release needs a numeric fd" 2 "$F" release rel x
+stop_family rel
+
+start --linger rel2 "$B/oldparent" -I 1 -- -i 50 -e
+SUP=$(sup_of rel2) T=$(ticker_of rel2)
+"$F" cutover rel2 "$T" >/dev/null
+FDR=$(held_fd rel2 pipe-r)
+expect_rc "release with one unknown fd still exits 1" 1 "$F" release rel2 "$FDR" 9999
+check "the known fd was still released" lacks " pipe-r " "$("$F" inspect rel2)"
+check "releasing a drained fd closes its log" bash -c "! ls -l /proc/$SUP/fd | grep -q 'adopted-$T-fd1.log'"
+stop_family rel2
+
 echo "cleanup after a crash"
 start crash "$B/oldparent" 1 -- -i 50
 COLD=$(old_of crash) CT=$(ticker_of crash)

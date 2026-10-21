@@ -73,7 +73,7 @@ int main(void)
 ```
 
 What to know:
-- **Close what you don't need.** A held `pipe-w` keeps the child's stdin open forever. Close it to send the child EOF.
+- **Close what you don't need.** A held `pipe-w` keeps the child's stdin open forever. Close it to send the child EOF. Without a handover, `focker release NAME FD` does the same from the outside.
 - **Drain what you keep.** A `pipe-r` you never read fills up (64 KiB by default), and then the child blocks on write.
 - **No focker after this.** The control socket is gone, so `focker` commands report the family as not running. `ps -a` shows `handed over to CMD`.
 - `examples/newparent.c` is a complete version that relays output with `poll()`.

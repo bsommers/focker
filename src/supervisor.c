@@ -184,6 +184,8 @@ static void forward_signal(int sig)
 
 static void drain(struct stolen *s)
 {
+    if (s->fd < 0)
+        return;
     char buf[65536];
     ssize_t n = read(s->fd, buf, sizeof buf);
     if (n > 0) {
@@ -268,6 +270,32 @@ static void inspect_json(struct sbuf *out)
         sb_printf(out, "}");
     }
     sb_printf(out, "]}\n");
+}
+
+/* release FD...: close fds held for adopted children. Unknown fds are
+ * reported and make the request fail, but don't stop the others. */
+static int do_release(char **args, int nargs, struct sbuf *out)
+{
+    int rc = 0;
+    for (int a = 1; a < nargs; a++) {
+        int fd = atoi(args[a]);
+        struct stolen *s = NULL;
+        for (int i = 0; i < fam.nstolen && !s; i++)
+            if (fam.stolen[i].fd >= 0 && fam.stolen[i].fd == fd)
+                s = &fam.stolen[i];
+        if (!s) {
+            sb_printf(out, "release: focker holds no fd %d\n", fd);
+            rc = 1;
+            continue;
+        }
+        close(s->fd);
+        if (s->logfd >= 0)
+            close(s->logfd);
+        s->fd = s->logfd = -1;
+        logmsg("released %s fd %d (child %d fd %d)", s->kind, fd, s->child, s->child_fd);
+        sb_printf(out, "release: closed %s fd %d (child %d fd %d)\n", s->kind, fd, s->child, s->child_fd);
+    }
+    return rc;
 }
 
 static int do_inspect(struct sbuf *out, bool json)
@@ -545,6 +573,8 @@ static void handle_client(int cfd)
         rc = do_inspect(&out, nargs > 1 && strcmp(args[1], "json=1") == 0);
     else if (strcmp(args[0], "cutover") == 0)
         rc = do_cutover(args, nargs, &out);
+    else if (strcmp(args[0], "release") == 0)
+        rc = do_release(args, nargs, &out);
     else if (strcmp(args[0], "stop") == 0)
         rc = do_stop(args, nargs, &out);
     else if (strcmp(args[0], "handover") == 0) {
@@ -668,8 +698,12 @@ int supervisor_run(const char *name, const char *dir, char **argv, bool detached
         }
         if (pfd[1].revents & POLLIN) {
             int cfd = accept4(lfd, NULL, NULL, SOCK_CLOEXEC);
-            if (cfd >= 0)
+            if (cfd >= 0) {
                 handle_client(cfd);
+                /* a cutover or release may have closed or moved held-fd slots, so
+                 * idx[] is stale; poll is level-triggered, so drain next round */
+                continue;
+            }
         }
         for (nfds_t i = 2; i < n; i++)
             if (pfd[i].revents)

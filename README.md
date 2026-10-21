@@ -37,7 +37,7 @@ Needs Linux 5.6+ (`pidfd_getfd`), a C11 compiler and glibc 2.32+. There are no o
 
 ```sh
 make            # builds build/focker and the example programs
-make test       # 43 unit + 117 integration tests (real processes, no root needed)
+make test       # 53 unit + 144 integration tests (real processes, no root needed)
 make unit       # just the /proc parser and sock_diag unit tests
 make asan       # both suites under ASan+LSan, then UBSan (about 45 s); any report fails
 make lint       # gcc -fanalyzer (warnings are errors) and shellcheck
@@ -93,6 +93,7 @@ handover: 4200 becomes ./build/newparent; it inherits 1 child and 1 fd
 | `focker logs [-f] [-p PID] NAME` | supervisor log, or a child's drained output |
 | `focker freeze / thaw NAME PID...` | SIGSTOP / SIGCONT a family member |
 | `focker stop [-s SIG] NAME` | signal the family's direct children |
+| `focker release NAME FD...` | close fds focker holds for adopted children (e.g. send a child EOF on stdin) |
 | `focker rm NAME` | delete an exited family's state |
 
 Every command takes `--help`. Exit codes are `0` for success, `1` for a runtime failure and `2` for a usage error.

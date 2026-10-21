@@ -29,6 +29,7 @@ static const char *USAGE =
     "  freeze    stop processes in a family with SIGSTOP\n"
     "  thaw      resume processes in a family with SIGCONT\n"
     "  stop      signal a family's direct children (default SIGTERM)\n"
+    "  release   close fds focker holds for adopted children (e.g. to send EOF)\n"
     "  rm        remove an exited family's state directory\n"
     "  version   print the version\n"
     "\n"
@@ -100,6 +101,14 @@ static const char *PS_USAGE =
     "\n"
     "  -a, --all   include exited families\n"
     "  --json      print one JSON document instead of the table (keys in docs/USAGE.md)\n";
+
+static const char *RELEASE_USAGE =
+    "usage: focker release NAME FD...\n"
+    "\n"
+    "Closes fds focker holds on behalf of adopted children. FD is focker's own fd\n"
+    "number: the FD column of 'focker inspect', or the first field of FOCKER_FDS.\n"
+    "Closing a held pipe-w sends the child EOF on that fd; closing a drained fd\n"
+    "also closes its log. Exits 1 if any FD isn't held (the others are still closed).\n";
 
 static const char *NAME_USAGE_FMT =
     "usage: focker %s NAME\n";
@@ -536,6 +545,33 @@ static int cmd_freeze_thaw(int argc, char **argv)
     return cmd_signal_pids(argv[1], pids, n, stop);
 }
 
+static int cmd_release(int argc, char **argv)
+{
+    static const struct option opts[] = { { "help", no_argument, 0, 'h' }, { 0, 0, 0, 0 } };
+    int c;
+    while ((c = getopt_long(argc, argv, "+h", opts, NULL)) != -1) {
+        switch (c) {
+        case 'h': fputs(RELEASE_USAGE, stdout); return FK_OK;
+        default: return usage_error(RELEASE_USAGE, NULL, NULL);
+        }
+    }
+    if (argc - optind < 2)
+        return usage_error(RELEASE_USAGE, "expected a family name and at least one FD%s", "");
+    if (need_name(argv[optind], RELEASE_USAGE) != FK_OK)
+        return FK_USAGE;
+    char *args[MAX_ARGS];
+    int n = 0;
+    args[n++] = "release";
+    for (int i = optind + 1; i < argc && n < MAX_ARGS; i++) {
+        char *end;
+        long fd = strtol(argv[i], &end, 10);
+        if (*argv[i] == '\0' || *end || fd < 0 || fd > 65535)
+            return usage_error(RELEASE_USAGE, "bad FD '%s'", argv[i]);
+        args[n++] = argv[i];
+    }
+    return simple_request(argv[optind], args, n);
+}
+
 static int cmd_stop(int argc, char **argv)
 {
     static const struct option opts[] = { { "signal", required_argument, 0, 's' },
@@ -595,6 +631,8 @@ int main(int argc, char **argv)
         return cmd_freeze_thaw(argc, argv);
     if (strcmp(cmd, "stop") == 0)
         return cmd_stop(argc, argv);
+    if (strcmp(cmd, "release") == 0)
+        return cmd_release(argc, argv);
     fprintf(stderr, "focker: unknown command '%s'\n", cmd);
     fputs(USAGE, stderr);
     return FK_USAGE;
