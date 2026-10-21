@@ -16,7 +16,7 @@ second fg takes it over." On risk: "mitigate the risks as much as possible."
 
 ## Goals
 
-1. `focker adopt-external NAME PID` moves the tree rooted at PID under a focker family, via a CRIU dump and
+1. `focker adopt-external NAME PID` moves the job containing PID (its process group, so a whole pipeline) under a focker family, via a CRIU dump and
    restore. The restored processes keep their PIDs and become family members (`ps`, `tree`, `inspect`, `stop`,
    `handover` work on them as on any member).
 2. A job whose stdio was a terminal is restored onto a fresh pty whose master the supervisor holds. Until someone
@@ -65,6 +65,15 @@ In order, stopping at the first failure with exit 1 and a reason:
 
 `--dry-run` stops after step 4 and prints what would happen (tree, terminal found, where images go).
 
+### Confirmation (user decision)
+
+After pre-flight passes, `adopt-external` prints what it will do (the job's PIDs, its terminal, the family) and asks
+`kill the original and restore under NAME? [y/N]`. Anything but `y`/`yes` exits 1 with nothing touched. `--yes`
+skips the prompt. With no `--yes` and stdin not a terminal, it exits 1 rather than guess.
+
+The prompt comes before step 5, while the job is still running in terminal A, so a slow answer never leaves it
+stopped (my call: the alternative, asking between steps 7 and 8, would hold the job stopped while waiting).
+
 ### The move
 
 5. Create or join the family. If NAME has a running supervisor, the job joins it; otherwise a detached lingering
@@ -82,6 +91,22 @@ In order, stopping at the first failure with exit 1 and a reason:
     `criu restore` invocation to retry by hand.
 
 Terminal A's shell sees its job die (it reports "Killed"). That is expected and documented.
+
+### Pipelines move together (user decision)
+
+A shell job like `make | tee build.log` is several sibling processes under terminal A's shell, sharing a process
+group. criu dumps one tree per root, and the pipe between the siblings crosses from one tree to the other.
+
+- The unit of adoption is the job: the process group of PID, so PID can be any member of the pipeline. Every
+  process in the group whose parent is outside the group is a root, and each root's whole subtree moves.
+- The whole group is stopped before any root is dumped, so no data moves through the pipes between dumps.
+- Pre-flight trial-dumps every root. If any root would be refused, nothing moves.
+- Pipes that join two roots are dumped as external and recreated by focker, then handed to each restore with
+  `--inherit-fd fd[N]:pipe:[INODE]` so the pipeline is connected again. Data sitting in the pipe buffer must
+  arrive exactly once; the spike checks this.
+- All roots are restored before any is resumed. If one restore fails after the point of no return, the ones already
+  restored are killed, every root's images are kept, and the retry line covers all of them.
+- The pipeline shares the one new pty (as it shared terminal A).
 
 ### Jobs without a terminal
 
@@ -124,11 +149,12 @@ USE-CASES (a walkthrough), ARCHITECTURE, CHANGELOG, `.planning` (CRIU-01; Phase 
 - Detach key Ctrl-P Ctrl-Q; `fg` exits with the job's exit code.
 - Images deleted on success, kept on failure.
 - Trial dump on by default (no flag to skip it).
+- The confirmation prompt comes before anything is stopped, not just before the kill.
 - Established TCP refused outright rather than attempting with extra privilege.
 
 ## Left to the builder
 
-- Session and process-group handling on restore. With `--shell-job`, the restored job must end up as a session
+- Session and process-group handling on restore, and reconnecting a pipeline's pipes exactly once. With `--shell-job`, the restored job must end up as a session
   with the new pty as its controlling terminal. This is the riskiest unknown and is the plan's first task, as a
   throwaway spike against criu 4.2 here.
 - How the supervisor runs criu without blocking its poll loop (it can reuse the Phase 7 job pattern).
