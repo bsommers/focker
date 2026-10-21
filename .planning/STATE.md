@@ -4,11 +4,11 @@ milestone: v2.0
 milestone_name: Reach
 status: planning
 progress:
-  total_phases: 4
+  total_phases: 8
   completed_phases: 2
-  total_plans: 2
+  total_plans: 3
   completed_plans: 2
-  percent: 50
+  percent: 25
 ---
 
 # Project State
@@ -23,12 +23,12 @@ See: .planning/PROJECT.md (updated 2026-10-20)
 ## Current Position
 
 Milestone: v2.0 Reach (v1.0 Hardening shipped 2026-10-20, see .planning/MILESTONES.md)
-Phase: 7 (Async cutover), of phases 5-8
+Phase: 7 (Async cutover), of phases 5-12
 Plan: 0 of 1 in current phase
 Status: Planned (07-01-PLAN.md; steps in docs/superpowers/plans/2026-10-20-async-cutover.md)
 Last activity: 2026-10-20 — Phase 6 complete (loopback TCP takeover, FD-01)
 
-Progress: [█████░░░░░] 50% (v2.0)
+Progress: [██▌░░░░░░░] 25% (v2.0)
 
 ## Performance Metrics
 
@@ -64,6 +64,7 @@ Decisions are logged in the PROJECT.md Key Decisions table.
 - [Phase 2]: `procfs.c` reads from `proc_root` so unit tests can use a fixture tree. The Ctrl-C test needs python3 (skipped without it).
 - [Phase 3]: User: "do phase 3 all locally, no CI on github yet. if you build github CI, leave it disabled." The workflow is `ci/github-actions.yml`, outside `.github/workflows/`.
 - [Phase 3]: ASan and UBSan are separate builds, because UBSan ignores `log_path` in a combined build.
+- [2026-10-21]: User added Phases 9-12 (stubborn parents, focker wait, invisible pause, pty takeover) from the docs/USE-CASES.md walkthroughs; CRIU stays Phase 8.
 - [Phase 6]: TCP pairing compares addresses in IPv6 form (v4 as ::ffff:a.b.c.d) so dual-stack sockets pair with v4 ones; a v6 dump failing with ENOENT/EAFNOSUPPORT/EINVAL means no v6 sockets.
 - [Phase 4]: Step-level plan kept in superpowers format (`docs/superpowers/plans/2026-10-20-efficiency.md`) at the user's request; GSD phase files point to it.
 

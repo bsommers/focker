@@ -28,16 +28,20 @@ A cutover must never leave a child worse off. Either the child ends up adopted, 
 
 <!-- Milestone v2.0: Reach. -->
 
-- [ ] Release a single held fd, and JSON output for `ps`/`inspect` (FD-02, OUT-01)
-- [ ] Take over loopback TCP connections between old parent and child (FD-01)
+- [x] Release a single held fd, and JSON output for `ps`/`inspect` (FD-02, OUT-01)
+- [x] Take over loopback TCP connections between old parent and child (FD-01)
 - [ ] Run the cutover as a non-blocking state machine in the poll loop (ASYNC-01)
-- [ ] Adopt processes not started under focker via CRIU, if the privilege question is settled (CRIU-01)
+- [ ] Adopt processes not started under focker via a capability-granted CRIU (CRIU-01)
+- [ ] Stubborn parents: warn about TERM-catching parents, `--kill-after`, `--tree` (STUB-01..03)
+- [ ] `focker wait` for scripts (WAIT-01)
+- [ ] An invisible, ptrace-based pause (PAUSE-01)
+- [ ] Pty takeover: a held pty master, and a fresh pty for terminal-bound jobs (PTY-01, PTY-02)
 
 ### Out of Scope
 
 - Non-Linux platforms. Never: the tool is built on Linux-only kernel interfaces
 - Privileges on focker itself. CRIU-01 may only use privilege held by the `criu` binary
-- Ptys, eventfds, memfds, and moving pgrp/session/cgroup. No demand yet
+- Eventfds, memfds, and moving pgrp/session/cgroup. No demand yet (ptys are in scope since 2026-10-21: PTY-01/02)
 
 ## Context
 
