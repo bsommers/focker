@@ -9,7 +9,7 @@
 #include <sys/types.h>
 #include <sys/un.h>
 
-#define FOCKER_VERSION "0.1.0"
+#define FOCKER_VERSION "1.0.0"
 
 /* exit codes */
 #define FK_OK    0
