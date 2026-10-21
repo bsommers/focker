@@ -144,10 +144,10 @@ static void sync_members(void)
     }
 }
 
-static void release_stolen_for(pid_t child)
+void release_stolen_for(struct family *f, pid_t child)
 {
-    for (int i = 0; i < fam.nstolen; i++) {
-        struct stolen *s = &fam.stolen[i];
+    for (int i = 0; i < f->nstolen; i++) {
+        struct stolen *s = &f->stolen[i];
         if (s->child != child || s->fd < 0 || s->drain)
             continue; /* read ends drain until EOF on their own */
         close(s->fd);
@@ -180,7 +180,7 @@ static void reap_children(void)
         if (pid == first_pid)
             first_status = st;
         logmsg("%d (%s) %s", pid, m ? m->cmd : "?", describe_status(st));
-        release_stolen_for(pid);
+        release_stolen_for(&fam, pid);
     }
 }
 

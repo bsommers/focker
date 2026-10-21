@@ -25,11 +25,12 @@ completed: 2026-10-21
 - `cutover()` became a heap job: `cutover_start` (steps 0-3), `cutover_step` (one non-blocking check; verify/thaw/bystanders or the timeout rollback), `cutover_cancel`, `cutover_owns`.
 - `supervisor.c` keeps one in-flight job with its client fd and transcript, polls every 20 ms while it's set, and replies through `finish_inflight` when it ends. Mutating requests get `busy (a cutover is in progress)`. The loop never exits while a job is in flight.
 - TERM/INT/HUP/QUIT during the wait cancel the job (`cutover: cancelled by SIGTERM`, rollback) before forwarding.
-- 19 integration checks (`async cutover`): drains grow mid-wait; `inspect` and `ps` answer; second cutover, dry run, `release`, `handover` and `stop` are busy and `stop` leaves the family running; the waiting cutover completes; a vanished client doesn't stop it; a target killed mid-wait fails the cutover and isn't a member; SIGTERM rolls back first and leaves the target unstopped and untraced.
+- 21 integration checks (`async cutover`): drains grow mid-wait; `inspect` and `ps` answer; second cutover, dry run, `release`, `handover` and `stop` are busy and `stop` leaves the family running; the waiting cutover completes; a vanished client doesn't stop it; a multithreaded target with a held stdin killed mid-wait fails the cutover, isn't a member (nor are its threads), and its held stdin is closed; SIGTERM rolls back first and leaves the target unstopped and untraced.
 
 ## Deviations / found along the way
-- A SIGKILLed frozen target made its oldparent exit, so the zombie landed on the supervisor and was reported `adopted` (exit 0). Verify now adopts a target only while its pidfd says it's alive, and dead non-member targets are consumed at every step and when the job ends.
+- A SIGKILLed frozen target made its oldparent exit, so the zombie landed on the supervisor and was reported `adopted` (exit 0). Verify now adopts a target only while its pidfd says it's alive, and dead non-member targets are consumed at every step and when the job ends: threads by tid, the target through its pidfd until fully reaped, and its held write ends released.
+- Final review (fresh reviewer) found the job's own reaping skipped `release_stolen_for` (held stdin leaked), and threads of a killed multithreaded target showed up as orphan members; fixed with tests.
 - `-fanalyzer` flagged `live[]` in `thaw_ptrace` once `ntids` came from the heap job; it gets a zero initializer.
 
 ## Verification
-- `make ci` exit 0: 84 unit + 176 integration checks under the plain, ASan and UBSan builds, no sanitizer reports.
+- `make ci` exit 0: 84 unit + 178 integration checks under the plain, ASan and UBSan builds, no sanitizer reports.

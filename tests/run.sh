@@ -297,8 +297,8 @@ check "--wait adopts the child" test "$(ppid_of "$T")" = "$SUP"
 stop_family waiter
 
 echo "async cutover"
-async_fam() { # NAME: two oldparents P1, P2 under one sh; T1 (P1's ticker) is adopted with its pipe draining
-    start "$1" sh -c "$B/oldparent 1 -- -i 50 & $B/oldparent 1 -- -i 50 & wait" || return 1
+async_fam() { # NAME [OLDPARENT-FLAGS [TICKER-FLAGS]]: two oldparents P1, P2 under one sh; T1 (P1's ticker) is adopted with its pipe draining
+    start "$1" sh -c "$B/oldparent ${2:-} 1 -- -i 50 ${3:-} & $B/oldparent ${2:-} 1 -- -i 50 ${3:-} & wait" || return 1
     SUP=$(sup_of "$1")
     local sh; sh=$(kids_of "$SUP" | head -1)
     wait_for bash -c "[ \$(pgrep -P $sh | wc -l) -eq 2 ] && for p in \$(pgrep -P $sh); do pgrep -P \$p >/dev/null || exit 1; done"
@@ -338,13 +338,16 @@ check "a vanished client doesn't stop the cutover" wait_for bash -c "[ \"\$(ps -
 expect_rc "the supervisor survives a vanished client" 0 "$F" inspect async2
 stop_family async2
 
-async_fam async3
+async_fam async3 -I "-t 4"
 "$F" cutover --wait -t 1 async3 "$T2" >/dev/null 2>&1 & cpid=$!
 wait_for frozen_by "$T2" "$SUP"
 kill -9 "$T2"
 wait "$cpid"; rc=$?
 check "a target killed during the wait fails the cutover" test $rc -eq 1
-check "a target killed during the wait is not a member" bash -c "! '$F' inspect async3 | grep -Eq '^ +$T2 '"
+out=$("$F" inspect async3)
+check "a target killed during the wait is not a member" lacks "^ \+$T2 " "$out"
+check "nor are its threads" lacks "orphan .*killed by" "$out"
+check "its held stdin is closed" bash -c "! grep -Eq '^ +[0-9]+ +pipe-w +$T2 ' <<<'$out'"
 kill_family "$FOCKER_RUNTIME_DIR/async3"
 
 async_fam async4

@@ -29,6 +29,7 @@ struct frozen {
     int      ntids;
     uint64_t pending_before;
     bool     frozen;
+    bool     reaped;   /* died during the cutover and is fully reaped: its pid may be reused */
 };
 
 struct plan_fd {
@@ -379,9 +380,16 @@ struct cutover_job {
     long   t0;
 };
 
+/* pid is a target or one of its frozen threads (each one is focker's tracee) */
 bool cutover_owns(const struct cutover_job *j, pid_t pid)
 {
-    return index_of(j->v, j->nv, pid) >= 0;
+    for (int i = 0; i < j->nv; i++) {
+        if (j->z[i].reaped)
+            continue;
+        if (j->v[i] == pid || has_tid(&j->z[i], pid))
+            return true;
+    }
+    return false;
 }
 
 /* A target that died while frozen is focker's tracee (or, once its old parent
@@ -390,9 +398,31 @@ bool cutover_owns(const struct cutover_job *j, pid_t pid)
  * never becomes a family member. Members (adopted, then died) go to the reaper. */
 static void consume_dead_targets(struct cutover_job *j)
 {
-    for (int i = 0; i < j->nv && i < j->ntfd; i++)
-        if (j->z[i].pid && !pinned_alive(j->tfd[i], j->v[i]) && !family_member(j->f, j->v[i], false))
-            waitpid(j->v[i], NULL, __WALL | WNOHANG);
+    for (int i = 0; i < j->nv && i < j->ntfd; i++) {
+        struct frozen *z = &j->z[i];
+        if (!z->pid || z->reaped)
+            continue;
+        siginfo_t si;
+        for (int k = 0; k < z->ntids; k++) { /* WEXITED only: never eats a ptrace-stop */
+            if (!z->tids[k] || z->tids[k] == z->pid)
+                continue;
+            si.si_pid = 0;
+            if (waitid(P_PID, (id_t)z->tids[k], &si, WEXITED | __WALL | WNOHANG) == 0 && si.si_pid)
+                z->tids[k] = 0;
+        }
+        if (pinned_alive(j->tfd[i], j->v[i]))
+            continue;
+        const struct member *m = family_member(j->f, j->v[i], false);
+        if (m && m->alive)
+            continue; /* adopted, then died: the reaper records it */
+        release_stolen_for(j->f, j->v[i]);
+        /* Through the pidfd, never the bare pid. Consuming the tracer's notice
+         * hands the zombie to its old parent, which may exit and pass it on to
+         * focker as a child, so keep at it until the zombie is gone for good. */
+        waitid(P_PIDFD, (id_t)j->tfd[i], &si, WEXITED | __WALL | WNOHANG);
+        if (pidfd_signal_(j->tfd[i], 0) < 0)
+            z->reaped = true;
+    }
 }
 
 static int job_end(struct cutover_job *j, int rc)

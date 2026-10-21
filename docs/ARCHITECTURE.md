@@ -123,7 +123,7 @@ What this catches:
 
 ### 5.1 Reaping without stealing names
 
-The reaper calls `waitid(P_ALL, WEXITED|WNOHANG|WNOWAIT)` first. That only peeks, so the zombie still exists and an unregistered orphan's `/proc/PID/comm` can be read before `waitpid` reaps it. While a cutover is in flight, a peeked exit of one of its targets stops the reaper for that round: a frozen target is focker's tracee, so its exit reaches focker first. The job consumes it at its next step (`waitpid(__WALL|WNOHANG)` for every target whose pidfd says it's gone and that isn't a member), so a target that dies while frozen is never recorded as a member, and the reaper resumes within 20 ms.
+The reaper calls `waitid(P_ALL, WEXITED|WNOHANG|WNOWAIT)` first. That only peeks, so the zombie still exists and an unregistered orphan's `/proc/PID/comm` can be read before `waitpid` reaps it. While a cutover is in flight, a peeked exit of one of its targets or their threads stops the reaper for that round: every frozen thread is focker's tracee, so its exit reaches focker first. The job consumes it at its next step: exited threads with `waitid(P_PID, tid, WEXITED|__WALL)`, and a dead target that isn't a live member through its pidfd (`P_PIDFD`), so a reused pid is never touched. It keeps at it until the pidfd shows the zombie fully reaped, because consuming the tracer's notice hands the zombie to the old parent, which may exit and pass it on to focker. The dead target's held write ends are closed, as the reaper would have done. So a target that dies while frozen is never recorded as a member, and the reaper resumes within 20 ms.
 
 ### 5.2 Orphaned process groups and SIGSTOP
 

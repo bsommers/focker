@@ -98,6 +98,7 @@ struct family {
 };
 
 struct member *family_member(struct family *f, pid_t pid, bool create);
+void release_stolen_for(struct family *f, pid_t child); /* close the held write ends of a dead child */
 
 /* cutover.c */
 enum freeze_method { FREEZE_PTRACE, FREEZE_SIGNAL, FREEZE_NONE };
