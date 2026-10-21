@@ -37,6 +37,7 @@ struct plan_fd {
     int   parent_fd, child_fd;
     bool  drain;
     char  kind[8];
+    char  ends[96]; /* "L <-> R" for tcp, else empty */
 };
 
 int parse_freeze(const char *s)
@@ -286,8 +287,8 @@ static void thaw(struct frozen *z, enum freeze_method m, uint64_t swallow, struc
 /* ---- fd takeover -------------------------------------------------------- */
 
 /* Find the old parent's fds that are the other end of something the child
- * holds: a pipe with the opposite access mode, or a unix socket whose peer is
- * the child's socket. Those are the ties that would break (EOF, EPIPE, a full
+ * holds: a pipe with the opposite access mode, or a unix or loopback TCP socket
+ * whose peer is the child's socket. Those are the ties that would break (EOF, EPIPE, a full
  * pipe that blocks the child forever) when the old parent dies. */
 static int plan_fds(pid_t child, pid_t parent, struct plan_fd *plan, int max)
 {
@@ -303,11 +304,14 @@ static int plan_fds(pid_t child, pid_t parent, struct plan_fd *plan, int max)
         for (int j = 0; j < nc; j++) {
             if (cf[j].kind != pf[i].kind)
                 continue;
-            bool linked;
-            if (pf[i].kind == 'p') /* same pipe, opposite ends */
+            bool linked, tcp = false;
+            if (pf[i].kind == 'p') { /* same pipe, opposite ends */
                 linked = cf[j].ino == pf[i].ino && cf[j].accmode != pf[i].accmode;
-            else                   /* the two ends of a unix socket */
-                linked = unixdiag_peer(pf[i].ino) == cf[j].ino && cf[j].ino != 0;
+            } else {                 /* the two ends of a unix socket, else of a loopback TCP connection */
+                linked = cf[j].ino != 0 && unixdiag_peer(pf[i].ino) == cf[j].ino;
+                if (!linked && cf[j].ino != 0 && inetdiag_peer(pf[i].ino) == cf[j].ino)
+                    linked = tcp = true;
+            }
             if (!linked)
                 continue;
             struct plan_fd *p = &plan[n++];
@@ -315,12 +319,15 @@ static int plan_fds(pid_t child, pid_t parent, struct plan_fd *plan, int max)
             p->parent = parent;
             p->parent_fd = pf[i].fd;
             p->child_fd = cf[j].fd;
+            p->ends[0] = '\0';
             if (pf[i].kind == 'p') {
                 p->drain = pf[i].accmode == O_RDONLY;
                 snprintf(p->kind, sizeof p->kind, "%s", p->drain ? "pipe-r" : "pipe-w");
             } else {
                 p->drain = true;
-                snprintf(p->kind, sizeof p->kind, "unix");
+                snprintf(p->kind, sizeof p->kind, "%s", tcp ? "tcp" : "unix");
+                if (tcp && inetdiag_endpoints(pf[i].ino, p->ends, sizeof p->ends) < 0)
+                    p->ends[0] = '\0';
             }
             break;
         }
@@ -330,8 +337,9 @@ static int plan_fds(pid_t child, pid_t parent, struct plan_fd *plan, int max)
 
 static void plan_line(struct sbuf *out, const char *verb, const struct plan_fd *p)
 {
-    sb_printf(out, "%s %s fd %d of %d (child %d fd %d)%s\n", verb, p->kind, p->parent_fd, p->parent,
-              p->child, p->child_fd, p->drain ? ", draining its output to a log" : ", held open");
+    sb_printf(out, "%s %s fd %d of %d (child %d fd %d)%s%s%s%s\n", verb, p->kind, p->parent_fd, p->parent,
+              p->child, p->child_fd, p->drain ? ", draining its output to a log" : ", held open",
+              p->ends[0] ? " (" : "", p->ends, p->ends[0] ? ")" : "");
 }
 
 /* ---- the cutover -------------------------------------------------------- */
@@ -470,6 +478,9 @@ int cutover(struct family *f, const struct cutover_opts *o, const pid_t *req, in
     if (o->steal) {
         if (unixdiag_load() < 0)
             sb_printf(out, "cutover: cannot read unix socket peers (%s); only pipes will be matched\n",
+                      strerror(errno));
+        if (inetdiag_load() < 0)
+            sb_printf(out, "cutover: cannot read TCP socket peers (%s); TCP connections will not be taken over\n",
                       strerror(errno));
         for (int i = 0; i < nv; i++) {
             int n = plan_fds(v[i], op[i], plan + nplan, MAX_STOLEN + 1 - nplan);

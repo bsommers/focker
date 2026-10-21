@@ -11,7 +11,7 @@ keeps working during a cutover. v1.0 requirements are archived in `.planning/mil
 ### Fd control
 
 - [x] **FD-02**: `focker release NAME FD` closes one held fd (for example to send EOF to a child's stdin). `inspect` no longer lists it, its drain log is closed, and releasing an unknown fd exits 1
-- [ ] **FD-01**: Loopback TCP connections between the old parent and a target are matched via `NETLINK_SOCK_DIAG`/`inet_diag` (IPv4 and IPv6) and taken over like unix sockets; `--dry-run` shows them as `tcp`
+- [x] **FD-01**: Loopback TCP connections between the old parent and a target are matched via `NETLINK_SOCK_DIAG`/`inet_diag` (IPv4 and IPv6) and taken over like unix sockets; `--dry-run` shows them as `tcp`
 
 ### Machine output
 
@@ -41,7 +41,7 @@ keeps working during a cutover. v1.0 requirements are archived in `.planning/mil
 |-------------|-------|--------|
 | FD-02 | Phase 5 | Complete |
 | OUT-01 | Phase 5 | Complete |
-| FD-01 | Phase 6 | Pending |
+| FD-01 | Phase 6 | Complete |
 | ASYNC-01 | Phase 7 | Pending |
 | CRIU-01 | Phase 8 | Pending |
 

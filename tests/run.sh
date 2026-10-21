@@ -139,6 +139,44 @@ check "ticker survives on the socket" alive "$T"
 check "socket output is captured" wait_for grep -q "ppid=$SUP" "$FOCKER_RUNTIME_DIR/sock/adopted-$T-fd1.log"
 stop_family sock
 
+echo "cutover (tcp)"
+tcp_family() { # NAME FLAG ADDR-REGEX
+    local name=$1 flag=$2 addr=$3 OLD T out rc
+    if ! start "$name" "$B/oldparent" "$flag" 2 -- -i 50; then
+        bad "$name: the tcp family starts"; return
+    fi
+    OLD=$(old_of "$name") T=$(ticker_of "$name")
+    out=$("$F" cutover --dry-run --from "$OLD" "$name" 2>&1)
+    check "$name: dry run plans the tcp takeover" \
+        grep -Eq "plan: take over tcp fd [0-9]+ of $OLD \(child $T fd 1\).*\($addr:[0-9]+ <-> $addr:[0-9]+\)" <<<"$out"
+    out=$("$F" cutover --from "$OLD" "$name" 2>&1); rc=$?
+    check "$name: tcp cutover succeeds" test $rc -eq 0
+    check "$name: both connections were taken over" test "$(grep -c 'took over tcp' <<<"$out")" -eq 2
+    check "$name: the tcp child keeps writing after the cutover" \
+        wait_for grep -q "ppid=$(sup_of "$name")" "$FOCKER_RUNTIME_DIR/$name/adopted-$T-fd1.log"
+    check "$name: the tcp child is alive" alive "$T"
+    check "$name: inspect lists a tcp fd" grep -Eq '^ *[0-9]+ +tcp ' <<<"$("$F" inspect "$name")"
+    stop_family "$name"
+}
+tcp_family tcp4 -T4 '127\.0\.0\.1'
+if python3 -c 'import socket; s=socket.socket(socket.AF_INET6); s.bind(("::1",0))' 2>/dev/null; then
+    tcp_family tcp6 -T6 '\[::1\]'
+else
+    printf '  skip  tcp6 (cannot bind ::1)\n'
+fi
+if command -v python3 >/dev/null; then
+    start tlis python3 -c '
+import socket, subprocess, sys
+l = socket.socket(); l.bind(("127.0.0.1", 0)); l.listen()
+subprocess.Popen([sys.argv[1], "-i", "50"], pass_fds=[l.fileno()], stdout=subprocess.DEVNULL).wait()' "$B/ticker"
+    T=$(ticker_of tlis)
+    out=$("$F" cutover --dry-run tlis "$T" 2>&1)
+    check "a shared listening socket is not taken" lacks "tcp" "$out"
+    stop_family tlis
+else
+    printf '  skip  listening socket (needs python3)\n'
+fi
+
 echo "signals during the cutover"
 start pd "$B/oldparent" 1 -- -i 50 -d 1
 T=$(ticker_of pd)

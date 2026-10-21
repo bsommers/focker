@@ -5,10 +5,10 @@ milestone_name: Reach
 status: planning
 progress:
   total_phases: 4
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
-  percent: 25
+  completed_phases: 2
+  total_plans: 2
+  completed_plans: 2
+  percent: 50
 ---
 
 # Project State
@@ -18,22 +18,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-20)
 
 **Core value:** A cutover must never leave a child worse off. Either the child ends up adopted, running, with its I/O intact, or everything rolls back and it stays exactly where it was.
-**Current focus:** Milestone v2.0 Reach, Phase 6: Loopback TCP takeover
+**Current focus:** Milestone v2.0 Reach, Phase 7: Async cutover
 
 ## Current Position
 
 Milestone: v2.0 Reach (v1.0 Hardening shipped 2026-10-20, see .planning/MILESTONES.md)
-Phase: 6 (Loopback TCP takeover), of phases 5-8
-Plan: 0 of 1 in current phase
-Status: Planned (06-01-PLAN.md; steps in docs/superpowers/plans/2026-10-20-loopback-tcp.md)
-Last activity: 2026-10-20 — v1.0.0 tagged; Phase 5 complete (release, ps/inspect --json)
+Phase: 7 (Async cutover), of phases 5-8
+Plan: 0 of TBD in current phase
+Status: Not planned
+Last activity: 2026-10-20 — Phase 6 complete (loopback TCP takeover, FD-01)
 
-Progress: [██▌░░░░░░░] 25% (v2.0)
+Progress: [█████░░░░░] 50% (v2.0)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5
+- Total plans completed: 7
 - Average duration: -
 - Total execution time: 0 hours
 
@@ -45,6 +45,8 @@ Progress: [██▌░░░░░░░] 25% (v2.0)
 | 2 | 2 | 2 | 1 |
 | 3 | 1 | 1 | 1 |
 | 4 | 1 | 1 | 1 |
+| 5 | 1 | 1 | 1 |
+| 6 | 1 | 1 | 1 |
 
 *Updated after each plan completion*
 
@@ -62,6 +64,7 @@ Decisions are logged in the PROJECT.md Key Decisions table.
 - [Phase 2]: `procfs.c` reads from `proc_root` so unit tests can use a fixture tree. The Ctrl-C test needs python3 (skipped without it).
 - [Phase 3]: User: "do phase 3 all locally, no CI on github yet. if you build github CI, leave it disabled." The workflow is `ci/github-actions.yml`, outside `.github/workflows/`.
 - [Phase 3]: ASan and UBSan are separate builds, because UBSan ignores `log_path` in a combined build.
+- [Phase 6]: TCP pairing compares addresses in IPv6 form (v4 as ::ffff:a.b.c.d) so dual-stack sockets pair with v4 ones; a v6 dump failing with ENOENT/EAFNOSUPPORT/EINVAL means no v6 sockets.
 - [Phase 4]: Step-level plan kept in superpowers format (`docs/superpowers/plans/2026-10-20-efficiency.md`) at the user's request; GSD phase files point to it.
 
 ### Pending Todos
@@ -83,5 +86,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-10-20
-Stopped at: Phase 6 planned, awaiting review
+Stopped at: Phase 6 complete; Phase 7 not planned
 Resume file: None

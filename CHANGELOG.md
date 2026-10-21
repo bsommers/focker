@@ -12,6 +12,10 @@ variables, the control protocol in docs/USAGE.md) is the public API.
 - `focker release NAME FD...` closes held fds, for example to send a child EOF on the stdin its old parent held.
 - `ps --json` and `inspect --json`. Keys are documented in docs/USAGE.md. Strings are always valid UTF-8.
 - Test fixtures: `oldparent -I` (holds each child's stdin), `ticker -e` (exits 5 on stdin EOF).
+- Cutovers take over loopback TCP connections (IPv4 and IPv6) between the old parent and a target, matched
+  via `inet_diag`, as kind `tcp`, drained like unix sockets. The transcript shows the endpoints. Connections
+  to other addresses and listening sockets are never taken.
+- Test fixture: `oldparent -T4|-T6` connects each child's stdout over loopback TCP.
 
 ### Fixed
 - After serving a request, the supervisor could drain held fds through stale slot indices, and drained fds

@@ -28,7 +28,7 @@ int main(void)
         char kind[16];
         if (sscanf(tok, "%d:%d:%15[^:]:%d", &fd, &child, kind, &childfd) != 4)
             continue;
-        if (strcmp(kind, "pipe-r") == 0 || strcmp(kind, "unix") == 0)
+        if (strcmp(kind, "pipe-r") == 0 || strcmp(kind, "unix") == 0 || strcmp(kind, "tcp") == 0)
             fds[n++] = (struct pollfd){ .fd = fd, .events = POLLIN };
     }
     free(copy);

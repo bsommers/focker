@@ -84,7 +84,7 @@ struct stolen {
     pid_t child, old_parent;
     int   parent_fd, child_fd;
     bool  drain;
-    char  kind[8];      /* pipe-r, pipe-w, unix */
+    char  kind[8];      /* pipe-r, pipe-w, unix, tcp */
     char  log[PATH_MAX + 64];
 };
 

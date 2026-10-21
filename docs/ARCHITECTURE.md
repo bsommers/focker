@@ -27,6 +27,7 @@ From 1 and 2: to give a child a new parent, the new parent must be an ancestor s
       cutover.c   freeze (ptrace|signal) · fd plan + pidfd_getfd · pidfd_send_signal · verify · thaw/swallow
       procfs.c    ppid, state, cmdline, children, threads, fds (+fdinfo access mode), pending signals
       unixdiag.c  NETLINK_SOCK_DIAG dump: unix socket inode → peer inode
+      inetdiag.c  NETLINK_SOCK_DIAG dump: loopback TCP socket inode → peer inode
       util.c      sbuf, logging, runtime dir, signal names, pidfd syscall wrappers
 ```
 
@@ -38,6 +39,7 @@ From 1 and 2: to give a child a new parent, the new parent must be an ancestor s
 | `src/cutover.c` | 699 | the cutover state machine |
 | `src/procfs.c` | 318 | `/proc` readers |
 | `src/unixdiag.c` | 100 | unix socket peer lookup |
+| `src/inetdiag.c` | 190 | loopback TCP peer lookup |
 | `src/util.c` | 203 | shared helpers |
 
 ## 3. Process layout
@@ -81,7 +83,8 @@ stateDiagram-v2
 - **fd plan:** for each target T with old parent P, compare `/proc/P/fd` and `/proc/T/fd`:
   - **pipes:** the same `pipe:[ino]` with *opposite* access modes (from `/proc/PID/fdinfo/N` `flags:`). That is P's end of a pipe whose other end T holds. If both hold the same end, it's an inherited duplicate, and closing P's copy changes nothing, so it's skipped.
   - **unix sockets:** the two ends of a `socketpair()` have different inodes, so the inode alone doesn't tie them. `unixdiag.c` dumps `NETLINK_SOCK_DIAG` with `UDIAG_SHOW_PEER` and matches P's socket whose peer inode is one of T's sockets.
-  - Read ends (`pipe-r`) and sockets are *drained*. focker reads them into `adopted-T-fdN.log`, so a child writing to stdout never blocks on a full pipe. Write ends (`pipe-w`) are only held open, so the child never sees EOF on stdin.
+  - **loopback TCP:** when a socket has no unix peer, `inetdiag.c` is asked. It dumps established TCP sockets for AF_INET and AF_INET6 with `inet_diag_req_v2`, keeps those whose both ends are loopback (`127.0.0.0/8`, `::1`, `::ffff:127.0.0.0/104`), and pairs P's socket with T's when each one's local endpoint is the other's remote endpoint. Addresses are compared in IPv6 form, so a dual-stack socket pairs with a plain IPv4 one. Listening sockets and connections to other hosts are never dumped or never paired, so they are never taken. The kind is `tcp`, and it's drained like a unix socket.
+  - Read ends (`pipe-r`) and sockets (`unix`, `tcp`) are *drained*. focker reads them into `adopted-T-fdN.log`, so a child writing to stdout never blocks on a full pipe. Write ends (`pipe-w`) are only held open, so the child never sees EOF on stdin.
 
 ### 4.2 Freeze
 
@@ -168,4 +171,4 @@ The scan's cost grows with the number of processes on the machine. The `children
 
 ## 7. Testing
 
-`tests/unit.c` (`make unit`, 53 checks) runs the `procfs.c` readers against a fixture tree (`proc_root` points at a temp dir), including child lookup through `task/*/children` versus the full scan (`proc_children_scan_only`), and `unixdiag.c` against a live socketpair. `tests/run.sh` runs 144 checks against real processes in a private `FOCKER_RUNTIME_DIR`, covering the CLI contract, run/rm, pipe and socketpair cutovers, multithreaded freezing, pdeathsig under both freeze methods, shutdown-kill swallowing, timeout rollback, grandchildren, `--from`, the cutover edge cases (a target dying during thaw, a SIGSTOP during the cutover, a target dying before the freeze, an already-pending signal), `--no-drain`/`--no-suppress`/`--wait`, `logs -f`, handover with fd inheritance and reaping and its exec-failure recovery, runtime paths past `sun_path`, the 64-target/128-fd/256-member limits, `release`, `ps --json`/`inspect --json`, cleanup after a crashed supervisor, and SIGINT from a tty (via python3's `pty`, skipped without python3) and from `kill`. The example programs in `examples/` are the test fixtures.
+`tests/unit.c` (`make unit`, 80 checks) runs the `procfs.c` readers against a fixture tree (`proc_root` points at a temp dir), including child lookup through `task/*/children` versus the full scan (`proc_children_scan_only`), `unixdiag.c` against a live socketpair, and `inetdiag.c`'s loopback classifier and live IPv4/IPv6 connection pairing. `tests/run.sh` runs 157 checks against real processes in a private `FOCKER_RUNTIME_DIR`, covering the CLI contract, run/rm, pipe, socketpair and loopback TCP (IPv4 and IPv6) cutovers, a shared listening socket that must not be taken, multithreaded freezing, pdeathsig under both freeze methods, shutdown-kill swallowing, timeout rollback, grandchildren, `--from`, the cutover edge cases (a target dying during thaw, a SIGSTOP during the cutover, a target dying before the freeze, an already-pending signal), `--no-drain`/`--no-suppress`/`--wait`, `logs -f`, handover with fd inheritance and reaping and its exec-failure recovery, runtime paths past `sun_path`, the 64-target/128-fd/256-member limits, `release`, `ps --json`/`inspect --json`, cleanup after a crashed supervisor, and SIGINT from a tty (via python3's `pty`, skipped without python3) and from `kill`. The example programs in `examples/` are the test fixtures.

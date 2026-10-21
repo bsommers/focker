@@ -13,8 +13,8 @@ These come from the kernel or from deliberate scope decisions. Each entry says w
 
 ## By design or not yet handled
 
-- **Linked fds only.** focker takes over pipes (opposite ends of the same pipe) and unix sockets (peer of the child's socket). It does **not** match TCP/UDP sockets (both ends of a loopback TCP connection could be matched via `inet_diag`; not implemented), ptys, eventfds, or memfds. Those survive the parent's death on their own unless the parent was the only holder of the far end.
-- **Held unix peers are drained, never written.** A child that waits to *read* from a socket the old parent used to write to will wait forever, unless a new parent takes over writing after a `handover`.
+- **Linked fds only.** focker takes over pipes (opposite ends of the same pipe), unix sockets (peer of the child's socket), and loopback TCP connections (`127.0.0.0/8` or `::1`, both ends on this host, matched via `inet_diag`). It does **not** match TCP connections to other addresses (even the host's own non-loopback IPs), listening sockets, UDP sockets, ptys, eventfds, or memfds. Those survive the parent's death on their own unless the parent was the only holder of the far end.
+- **Held unix and TCP peers are drained, never written.** A child that waits to *read* from a socket the old parent used to write to will wait forever, unless a new parent takes over writing after a `handover`.
 - **Process group and session don't change.** The child keeps the old parent's pgrp, session and controlling terminal. Job control from the original shell still reaches it.
 - **cgroup doesn't change.** Move it yourself with `echo PID > /sys/fs/cgroup/.../cgroup.procs` if you need to.
 - **Threads cloned mid-freeze.** The thread list is re-read until it is stable (up to 16 rounds). A process that creates threads faster than that can escape the freeze. The limit is 256 threads per frozen process.

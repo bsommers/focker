@@ -126,6 +126,7 @@ After a successful handover, the family no longer answers focker commands. `fock
 - `pipe-r`: a read end. The child writes to the pipe at its fd CHILDFD, and you read it here.
 - `pipe-w`: a write end. You write here, and the child reads at CHILDFD.
 - `unix`: your end of a unix socket connected to the child's CHILDFD.
+- `tcp`: your end of a loopback TCP connection (`127.0.0.0/8` or `::1`) whose other end is the child's CHILDFD. The cutover transcript shows its endpoints, as in `(127.0.0.1:51671 <-> 127.0.0.1:53362)`.
 
 Data focker drained before the handover is in `adopted-CHILD-fdN.log`, so CMD sees only what comes after. See [HOWTO: write a new-parent program](HOWTO.md#write-a-new-parent-program).
 
@@ -168,7 +169,7 @@ focker inspect [--json] NAME
 | `members[].status` | string | `running`, or the same text as the report (`exited 3`, `killed by SIGTERM`) |
 | `members[].exit_code` / `signal` | int / `"SIGx"`, or null | how a dead member ended |
 | `held_fds[].fd` | int | focker's own fd number, as used by `release` and `FOCKER_FDS` |
-| `held_fds[].kind` | `"pipe-r"`, `"pipe-w"`, `"unix"` | |
+| `held_fds[].kind` | `"pipe-r"`, `"pipe-w"`, `"unix"`, `"tcp"` | |
 | `held_fds[].log` | string or null | the drain log, or null for an fd that is only held |
 
 ## focker logs
@@ -204,7 +205,7 @@ focker release NAME FD...
 
 Closes fds that focker holds for adopted children. FD is focker's own fd number: the `FD` column of `inspect`, `held_fds[].fd` in `inspect --json`, or the first field of a `FOCKER_FDS` entry. Each one prints `release: closed KIND fd N (child PID fd M)`.
 - Releasing a `pipe-w` is how you send a child EOF on the stdin the old parent used to write to.
-- Releasing a drained `pipe-r` or `unix` fd closes its log as well. If nobody else holds that end, the child gets `EPIPE`/`SIGPIPE` on its next write.
+- Releasing a drained `pipe-r`, `unix` or `tcp` fd closes its log as well. If nobody else holds that end, the child gets `EPIPE`/`SIGPIPE` on its next write.
 - An FD focker doesn't hold prints `release: focker holds no fd N`. The other FDs are still released, and the command exits 1.
 - A missing or non-numeric FD is a usage error (exit 2).
 
