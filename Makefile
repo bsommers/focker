@@ -10,13 +10,13 @@ BUILD     ?= build
 ASAN_CFLAGS  := -O1 -g -fno-omit-frame-pointer -fsanitize=address
 UBSAN_CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=undefined -fno-sanitize-recover=all
 LINT_C     := $(wildcard src/*.c) tests/unit.c $(wildcard examples/*.c)
-LINT_SH    := tests/run.sh tests/sanitize.sh examples/demo.sh
+LINT_SH    := tests/run.sh tests/sanitize.sh tests/idle-cost.sh examples/demo.sh
 
 SRC      := $(wildcard src/*.c)
 OBJ      := $(SRC:src/%.c=$(BUILD)/%.o)
 EXAMPLES := $(BUILD)/ticker $(BUILD)/oldparent $(BUILD)/newparent
 
-.PHONY: all examples unit test asan lint ci demo install uninstall clean
+.PHONY: all examples unit test asan lint ci idle-cost demo install uninstall clean
 
 all: $(BUILD)/focker examples
 
@@ -59,6 +59,10 @@ lint:
 	    $(CC) $(FK_CFLAGS) -O2 -fanalyzer -Werror -c -o /dev/null $$f || exit 1; \
 	done
 	shellcheck -s bash $(LINT_SH)
+
+# CPU and wakeups of an idle supervisor (not part of ci: it's a measurement)
+idle-cost: all
+	FOCKER_BUILD=$(BUILD) tests/idle-cost.sh
 
 # what ci/github-actions.yml runs
 ci: lint test asan
