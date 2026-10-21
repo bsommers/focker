@@ -336,6 +336,27 @@ check "member history stops at 256" test "$members" -eq 256
 check "the running first command is never evicted" grep -Eq '^  [0-9]+ +run ' <<<"$("$F" inspect evict)"
 stop_family evict
 
+echo "json"
+# jsonok EXPR: stdin parses as JSON and the python expression EXPR (over d) is true
+jsonok() { python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if ($1) else 1)" 2>/dev/null; }
+if command -v python3 >/dev/null; then
+    start jsonfam "$B/oldparent" 1 -- -i 50 $'a"b\\c\xff'
+    T=$(ticker_of jsonfam)
+    "$F" cutover jsonfam "$T" >/dev/null
+    j=$("$F" inspect --json jsonfam)
+    check "inspect --json is valid JSON, odd cmdline bytes included" jsonok "True" <<<"$j"
+    check "inspect --json lists the adopted member" \
+        jsonok "any(m['pid'] == $T and m['origin'] == 'adopted' and m['alive'] is True and m['exit_code'] is None for m in d['members'])" <<<"$j"
+    check "inspect --json keeps the odd argument" jsonok "any('a\"b\\\\c�' in m['cmd'] for m in d['members'])" <<<"$j"
+    check "inspect --json lists the held fd" \
+        jsonok "d['held_fds'][0]['kind'] == 'pipe-r' and d['held_fds'][0]['child'] == $T and d['held_fds'][0]['child_fd'] == 1 and d['held_fds'][0]['log'].endswith('adopted-$T-fd1.log')" <<<"$j"
+    check "inspect --json has every top-level key" \
+        jsonok "set(d) == {'name', 'supervisor', 'state_dir', 'linger', 'members', 'held_fds'} and d['name'] == 'jsonfam'" <<<"$j"
+    expect_rc "inspect --json on a missing family exits 1" 1 "$F" inspect --json nobody
+else
+    printf '  skip  json (needs python3)\n'
+fi
+
 echo "cleanup after a crash"
 start crash "$B/oldparent" 1 -- -i 50
 COLD=$(old_of crash) CT=$(ticker_of crash)

@@ -141,10 +141,30 @@ Lists running families, sorted by name: `NAME PID STATUS CHILDREN COMMAND`. `-a`
 
 ```
 focker tree NAME
-focker inspect NAME
+focker inspect [--json] NAME
 ```
 
 `tree` prints the live process tree under the supervisor, with `(adopted from PID)` or `(orphan, adopted)` on direct children. `inspect` lists every member focker has seen (pid, origin, old parent, running or exit status, command) and every held fd (kind, child, child fd, old parent, log path).
+
+`inspect --json` prints the same thing as one JSON document. Every key is always present, with `null` when it doesn't apply. Strings are always valid UTF-8: a byte that isn't, as can happen in a command line, becomes U+FFFD.
+
+```json
+{"name": "fam", "supervisor": 4200, "state_dir": "/run/user/1000/focker/fam", "linger": false,
+ "members": [{"pid": 4202, "origin": "adopted", "from": 4201, "alive": false, "status": "exited 3",
+              "exit_code": 3, "signal": null, "cmd": "./ticker -i 50"}],
+ "held_fds": [{"fd": 7, "kind": "pipe-r", "child": 4202, "child_fd": 1, "from": 4201,
+               "log": "/run/user/1000/focker/fam/adopted-4202-fd1.log"}]}
+```
+
+| key | type | meaning |
+|---|---|---|
+| `members[].origin` | `"run"`, `"adopted"`, `"orphan"` | started by `run`, moved by `cutover`, or handed over by the kernel |
+| `members[].from` | int or null | the old parent, for adopted members |
+| `members[].status` | string | `running`, or the same text as the report (`exited 3`, `killed by SIGTERM`) |
+| `members[].exit_code` / `signal` | int / `"SIGx"`, or null | how a dead member ended |
+| `held_fds[].fd` | int | focker's own fd number, as used by `release` and `FOCKER_FDS` |
+| `held_fds[].kind` | `"pipe-r"`, `"pipe-w"`, `"unix"` | |
+| `held_fds[].log` | string or null | the drain log, or null for an fd that is only held |
 
 ## focker logs
 

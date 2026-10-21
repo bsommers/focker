@@ -228,9 +228,55 @@ static int do_members(struct sbuf *out)
     return 0;
 }
 
-static int do_inspect(struct sbuf *out)
+static void inspect_json(struct sbuf *out)
+{
+    sb_printf(out, "{\"name\":");
+    sb_json_str(out, fam.name);
+    sb_printf(out, ",\"supervisor\":%d,\"state_dir\":", getpid());
+    sb_json_str(out, fam.dir);
+    sb_printf(out, ",\"linger\":%s,\"members\":[", linger_ ? "true" : "false");
+    for (int i = 0; i < fam.nmembers; i++) {
+        const struct member *m = &fam.members[i];
+        char origin[16];
+        origin_name(m->origin, origin, sizeof origin);
+        sb_printf(out, "%s{\"pid\":%d,\"origin\":\"%s\",\"from\":", i ? "," : "", m->pid, origin);
+        if (m->old_ppid)
+            sb_printf(out, "%d", m->old_ppid);
+        else
+            sb_printf(out, "null");
+        sb_printf(out, ",\"alive\":%s,\"status\":", m->alive ? "true" : "false");
+        sb_json_str(out, m->alive ? "running" : describe_status(m->status));
+        if (!m->alive && WIFEXITED(m->status))
+            sb_printf(out, ",\"exit_code\":%d,\"signal\":null", WEXITSTATUS(m->status));
+        else if (!m->alive && WIFSIGNALED(m->status))
+            sb_printf(out, ",\"exit_code\":null,\"signal\":\"%s\"", signame(WTERMSIG(m->status)));
+        else
+            sb_printf(out, ",\"exit_code\":null,\"signal\":null");
+        sb_printf(out, ",\"cmd\":");
+        sb_json_str(out, m->cmd);
+        sb_printf(out, "}");
+    }
+    sb_printf(out, "],\"held_fds\":[");
+    int shown = 0;
+    for (int i = 0; i < fam.nstolen; i++) {
+        const struct stolen *s = &fam.stolen[i];
+        if (s->fd < 0)
+            continue;
+        sb_printf(out, "%s{\"fd\":%d,\"kind\":\"%s\",\"child\":%d,\"child_fd\":%d,\"from\":%d,\"log\":",
+                  shown++ ? "," : "", s->fd, s->kind, s->child, s->child_fd, s->old_parent);
+        sb_json_str(out, s->drain ? s->log : NULL);
+        sb_printf(out, "}");
+    }
+    sb_printf(out, "]}\n");
+}
+
+static int do_inspect(struct sbuf *out, bool json)
 {
     sync_members();
+    if (json) {
+        inspect_json(out);
+        return 0;
+    }
     sb_printf(out, "name:       %s\nsupervisor: %d (child subreaper)\nstate dir:  %s\n", fam.name, getpid(), fam.dir);
     sb_printf(out, "linger:     %s\n\nmembers:\n", linger_ ? "yes" : "no");
     sb_printf(out, "  %-8s %-8s %-8s %-20s %s\n", "PID", "ORIGIN", "FROM", "STATE", "COMMAND");
@@ -496,7 +542,7 @@ static void handle_client(int cfd)
     else if (strcmp(args[0], "members") == 0)
         rc = do_members(&out);
     else if (strcmp(args[0], "inspect") == 0)
-        rc = do_inspect(&out);
+        rc = do_inspect(&out, nargs > 1 && strcmp(args[1], "json=1") == 0);
     else if (strcmp(args[0], "cutover") == 0)
         rc = do_cutover(args, nargs, &out);
     else if (strcmp(args[0], "stop") == 0)

@@ -103,6 +103,11 @@ static const char *PS_USAGE =
 static const char *NAME_USAGE_FMT =
     "usage: focker %s NAME\n";
 
+static const char *INSPECT_USAGE =
+    "usage: focker inspect [--json] NAME\n"
+    "\n"
+    "  --json   print one JSON document instead of the report (keys in docs/USAGE.md)\n";
+
 static const char *LOGS_USAGE =
     "usage: focker logs [-f] [-p PID] NAME\n"
     "\n"
@@ -437,6 +442,29 @@ static int cmd_ps_main(int argc, char **argv)
     return cmd_ps(all);
 }
 
+static int cmd_inspect(int argc, char **argv)
+{
+    bool json = false;
+    const char *name = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--json") == 0)
+            json = true;
+        else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            fputs(INSPECT_USAGE, stdout);
+            return FK_OK;
+        } else if (!name)
+            name = argv[i];
+        else
+            return usage_error(INSPECT_USAGE, "unexpected argument '%s'", argv[i]);
+    }
+    if (!name)
+        return usage_error(INSPECT_USAGE, "missing family name%s", "");
+    if (need_name(name, INSPECT_USAGE) != FK_OK)
+        return FK_USAGE;
+    char *args[] = { "inspect", "json=1" };
+    return simple_request(name, args, json ? 2 : 1);
+}
+
 static int cmd_named(int argc, char **argv)
 {
     char usage[128];
@@ -451,10 +479,7 @@ static int cmd_named(int argc, char **argv)
         return FK_USAGE;
     if (strcmp(argv[0], "tree") == 0)
         return cmd_tree(argv[1]);
-    if (strcmp(argv[0], "rm") == 0)
-        return cmd_rm(argv[1], false);
-    char *args[] = { "inspect" };
-    return simple_request(argv[1], args, 1);
+    return cmd_rm(argv[1], false);
 }
 
 static int cmd_logs_main(int argc, char **argv)
@@ -557,7 +582,9 @@ int main(int argc, char **argv)
         return cmd_handover(argc, argv);
     if (strcmp(cmd, "ps") == 0)
         return cmd_ps_main(argc, argv);
-    if (strcmp(cmd, "tree") == 0 || strcmp(cmd, "inspect") == 0 || strcmp(cmd, "rm") == 0)
+    if (strcmp(cmd, "inspect") == 0)
+        return cmd_inspect(argc, argv);
+    if (strcmp(cmd, "tree") == 0 || strcmp(cmd, "rm") == 0)
         return cmd_named(argc, argv);
     if (strcmp(cmd, "logs") == 0)
         return cmd_logs_main(argc, argv);
