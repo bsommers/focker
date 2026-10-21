@@ -403,11 +403,12 @@ static int do_handover(char **args, int nargs, int cfd, struct sbuf *out)
     envp[j++] = name;
     envp[j++] = dir;
 
-    /* answer before exec: the socket is about to go away */
-    sb_printf(out, "handover: %d is now %s; it inherits %d child%s and %d fd%s\n", getpid(), path, nk,
+    /* "exec" instead of "ok": cfd is close-on-exec, so a successful execve
+     * closes it and the client takes the EOF as success; a failed one
+     * appends "err" and the reason below */
+    sb_printf(out, "handover: %d becomes %s; it inherits %d child%s and %d fd%s\n", getpid(), path, nk,
               nk == 1 ? "" : "ren", nf, nf == 1 ? "" : "s");
-    dprintf(cfd, "ok\n%.*s", (int)out->len, out->p);
-    close(cfd);
+    dprintf(cfd, "exec\n%.*s", (int)out->len, out->p);
     out->len = 0;
     logmsg("handing over to %s", path);
     char note[PATH_MAX + 64];
@@ -451,7 +452,9 @@ static int do_handover(char **args, int nargs, int cfd, struct sbuf *out)
         if (s->fd >= 0 && s->drain)
             s->logfd = open(s->log, O_WRONLY | O_APPEND | O_CLOEXEC);
     }
-    return -1; /* reply already sent */
+    dprintf(cfd, "err\nhandover: cannot exec %s: %s; the family stays with focker\n", path, strerror(e));
+    close(cfd);
+    return -1; /* reply sent */
 }
 
 static void handle_client(int cfd)

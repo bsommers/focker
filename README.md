@@ -77,7 +77,7 @@ cutover: thawed 4202
 
 # 4. hand the adopted children to a new parent program (exec in place, same PID)
 $ focker handover demo -- ./build/newparent
-handover: 4200 is now ./build/newparent; it inherits 1 child and 1 fd
+handover: 4200 becomes ./build/newparent; it inherits 1 child and 1 fd
 ```
 
 ## Commands

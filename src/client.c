@@ -59,6 +59,14 @@ int client_request(const char *name, char **args, int nargs, struct sbuf *reply)
         return -1;
     }
     int rc = strncmp(reply->p, "ok\n", 3) == 0 ? 0 : 1;
+    if (strncmp(reply->p, "exec\n", 5) == 0) {
+        /* handover: EOF means the exec happened; "err" means it didn't */
+        char *err = strstr(reply->p, "\nerr\n");
+        rc = err ? 1 : 0;
+        if (err)
+            memmove(err + 1, err + 5, strlen(err + 5) + 1); /* drop the marker line */
+        reply->len = strlen(reply->p);
+    }
     size_t skip = (size_t)(nl - reply->p) + 1;
     memmove(reply->p, reply->p + skip, reply->len - skip + 1);
     reply->len -= skip;

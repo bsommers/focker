@@ -144,7 +144,7 @@ Before the exec:
 - restore the original signal mask and `SIGPIPE`
 - build `FOCKER_*` into the environment
 
-Then `execve`. If it fails, everything is rebuilt and the family stays with focker.
+Then `execve`. The client connection stays open across it (close-on-exec), so the client learns the outcome: EOF if the exec happened, or an `err` line if it failed. On failure, everything is rebuilt and the family stays with focker.
 
 ### 5.6 Idle cost
 

@@ -15,12 +15,18 @@ unset FOCKER_FREEZE
 pass=0 fail=0
 failed=()
 
+kill_family() { # DIR: the family's state dir
+    local pid
+    pid=$(cat "$1/pid" 2>/dev/null) || return 0
+    pkill -KILL -P "$pid" 2>/dev/null
+    # a detached supervisor leads its own session, so this also reaches
+    # children that a crashed supervisor left to some other reaper
+    pkill -KILL -s "$pid" 2>/dev/null
+    kill -KILL "$pid" 2>/dev/null
+}
 cleanup() {
     for d in "$FOCKER_RUNTIME_DIR"/*/; do
-        [ -f "$d/pid" ] || continue
-        pid=$(cat "$d/pid")
-        pkill -KILL -P "$pid" 2>/dev/null
-        kill -KILL "$pid" 2>/dev/null
+        kill_family "$d"
     done
     rm -rf "$FOCKER_RUNTIME_DIR"
 }
@@ -266,7 +272,9 @@ start hof "$B/oldparent" 1 -- -i 50
 T=$(ticker_of hof)
 "$F" cutover hof "$T" >/dev/null
 printf '#!/nonexistent/interpreter\n' >"$FOCKER_RUNTIME_DIR/badparent"; chmod +x "$FOCKER_RUNTIME_DIR/badparent"
-"$F" handover hof -- "$FOCKER_RUNTIME_DIR/badparent" >/dev/null 2>&1
+out=$("$F" handover hof -- "$FOCKER_RUNTIME_DIR/badparent" 2>&1); rc=$?
+check "a failed handover exits 1" test $rc -eq 1
+check "a failed handover says why" grep -q "cannot exec .*badparent" <<<"$out"
 check "a failed handover is logged" wait_for grep -q "handover to .* failed" "$FOCKER_RUNTIME_DIR/hof/focker.log"
 expect_rc "the family still answers after a failed handover" 0 "$F" inspect hof
 check "ps -a doesn't report a handover" lacks "handed over" "$("$F" ps -a | grep hof)"
@@ -327,6 +335,15 @@ members=$("$F" inspect evict | sed -n '/^members:/,/^$/p' | grep -Ec '^  [0-9]')
 check "member history stops at 256" test "$members" -eq 256
 check "the running first command is never evicted" grep -Eq '^  [0-9]+ +run ' <<<"$("$F" inspect evict)"
 stop_family evict
+
+echo "cleanup after a crash"
+start crash "$B/oldparent" 1 -- -i 50
+COLD=$(old_of crash) CT=$(ticker_of crash)
+kill -KILL "$(sup_of crash)"
+check "a crashed supervisor's family is orphaned, not dead" wait_for bash -c "kill -0 $COLD 2>/dev/null && test \$(ps -o ppid= -p $COLD) -ne $(sup_of crash)"
+kill_family "$FOCKER_RUNTIME_DIR/crash/"
+check "cleanup kills the orphaned family by session" wait_for bash -c "! kill -0 $COLD 2>/dev/null && ! kill -0 $CT 2>/dev/null"
+rm -rf "$FOCKER_RUNTIME_DIR/crash"
 
 echo "signals to focker"
 "$F" run -d -n fwd -- sleep 30 >/dev/null
