@@ -24,8 +24,8 @@ See: .planning/PROJECT.md (updated 2026-10-20)
 
 Milestone: v2.0 Reach (v1.0 Hardening shipped 2026-10-20, see .planning/MILESTONES.md)
 Phase: 6 (Loopback TCP takeover), of phases 5-8
-Plan: 0 of TBD in current phase
-Status: Ready to plan
+Plan: 0 of 1 in current phase
+Status: Planned (06-01-PLAN.md; steps in docs/superpowers/plans/2026-10-20-loopback-tcp.md)
 Last activity: 2026-10-20 — v1.0.0 tagged; Phase 5 complete (release, ps/inspect --json)
 
 Progress: [██▌░░░░░░░] 25% (v2.0)
@@ -83,5 +83,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-10-20
-Stopped at: Phase 5 complete; next is planning Phase 6
+Stopped at: Phase 6 planned, awaiting review
 Resume file: None

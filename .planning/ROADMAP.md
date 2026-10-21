@@ -50,7 +50,10 @@ Plans:
   1. A fixture where the old parent and the child share a 127.0.0.1 and a ::1 connection: after the cutover the child's socket is still connected and its output is drained to a log
   2. `--dry-run` lists the connection as `tcp` with both endpoints
   3. Non-loopback and listening sockets are never taken
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 06-01-PLAN.md — inetdiag.c, tcp takeover in plan_fds, -T4/-T6 fixture (steps in docs/superpowers/plans/2026-10-20-loopback-tcp.md)
 
 ### Phase 7: Async cutover
 **Goal**: The supervisor never stops draining or answering read-only requests while a cutover is in flight
