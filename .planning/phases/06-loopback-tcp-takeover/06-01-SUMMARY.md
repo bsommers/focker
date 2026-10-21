@@ -21,7 +21,7 @@ completed: 2026-10-20
 **Cutovers take over loopback TCP connections (IPv4 and IPv6) as kind `tcp`, drained like unix sockets. Steps are in docs/superpowers/plans/2026-10-20-loopback-tcp.md.**
 
 ## Accomplishments
-- `src/inetdiag.c`: one established-TCP `inet_diag` dump per family, loopback-only table, mirror-endpoint pairing. 27 unit checks: the classifier (`127.x`, `::1`, `::ffff:127.x` yes; `10.x`, `192.168.x`, `::`, `::ffff:10.x`, `fe80::1` no), two live connections per family each paired with its own peer, a listener with no peer.
+- `src/inetdiag.c`: one established-TCP `inet_diag` dump per family, loopback-only table, mirror-endpoint pairing. 31 unit checks: the classifier (`127.x`, `::1`, `::ffff:127.x` yes; `10.x`, `192.168.x`, `::`, `::ffff:10.x`, `fe80::1` no), two live connections per family each paired with its own peer, a listener with no peer, a dual-stack server paired with an IPv4 client.
 - `plan_fds` falls back to the TCP peer; `plan:`/`took over` lines end with `(L <-> R)`. D-04 warning when the dump fails.
 - `oldparent -T4|-T6`; `newparent` relays `tcp` fds. 13 integration checks: v4 and v6 cutovers of two connections, drained output, `inspect` row, and a shared listening socket that is not taken.
 
@@ -29,4 +29,4 @@ completed: 2026-10-20
 - `-fanalyzer` flagged an fd stored through an out-pointer in the unit fixture; fds are now kept in locals until success.
 
 ## Verification
-- `make ci` exit 0: 80 unit + 157 integration checks under the plain, ASan and UBSan builds, no sanitizer reports.
+- `make ci` exit 0: 84 unit + 157 integration checks under the plain, ASan and UBSan builds, no sanitizer reports.

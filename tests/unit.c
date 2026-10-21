@@ -376,11 +376,44 @@ static void test_tcp_family(int family, const char *tag, const char *prefix, con
     close(lis);
 }
 
+/* A dual-stack IPv6 listener on ::ffff:127.0.0.1 accepts an IPv4 client: the
+ * accepted socket reports v4-mapped addresses and must still pair. */
+static void test_tcp_mapped(void)
+{
+    struct sockaddr_in6 a6 = { .sin6_family = AF_INET6 };
+    socklen_t len = sizeof a6;
+    int off = 0, l = socket(AF_INET6, SOCK_STREAM | SOCK_CLOEXEC, 0), c = -1, s = -1;
+    inet_pton(AF_INET6, "::ffff:127.0.0.1", &a6.sin6_addr);
+    if (l < 0 || setsockopt(l, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof off) < 0 ||
+        bind(l, (struct sockaddr *)&a6, sizeof a6) < 0 || listen(l, 1) < 0 ||
+        getsockname(l, (struct sockaddr *)&a6, &len) < 0) {
+        printf("  skip  mapped: cannot bind ::ffff:127.0.0.1\n");
+        if (l >= 0)
+            close(l);
+        return;
+    }
+    struct sockaddr_in a4 = { .sin_family = AF_INET, .sin_port = a6.sin6_port };
+    a4.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    c = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (c >= 0 && connect(c, (struct sockaddr *)&a4, sizeof a4) == 0)
+        s = accept4(l, NULL, NULL, SOCK_CLOEXEC);
+    CHECK("mapped: connection set up", s >= 0);
+    CHECK("mapped: inetdiag dump succeeds", inetdiag_load() == 0);
+    CHECK("mapped: v4 client pairs with the dual-stack server end", s >= 0 && inetdiag_peer(ino_of(c)) == ino_of(s));
+    CHECK("mapped: and back", s >= 0 && inetdiag_peer(ino_of(s)) == ino_of(c));
+    if (s >= 0)
+        close(s);
+    if (c >= 0)
+        close(c);
+    close(l);
+}
+
 static void test_tcp(void)
 {
     puts("live tcp pairs");
     test_tcp_family(AF_INET, "v4", "127.0.0.1:", " <-> 127.0.0.1:");
     test_tcp_family(AF_INET6, "v6", "[::1]:", " <-> [::1]:");
+    test_tcp_mapped();
 }
 
 int main(void)

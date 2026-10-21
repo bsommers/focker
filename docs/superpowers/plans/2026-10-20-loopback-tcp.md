@@ -80,4 +80,4 @@ Both tasks done in two commits. Deviations:
 - Pairing compares addresses in IPv6 form, so a dual-stack socket talking to 127.0.0.1 pairs with a plain IPv4 one.
 - A v6 dump failing with ENOENT/EAFNOSUPPORT/EINVAL counts as no v6 sockets, not a failure.
 - `newparent` relays `tcp` fds too, and the `cutover --help` text mentions loopback TCP.
-`make ci` passes: 80 unit + 157 integration checks under the plain, ASan and UBSan builds.
+`make ci` passes: 84 unit + 157 integration checks under the plain, ASan and UBSan builds.
