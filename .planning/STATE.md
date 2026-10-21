@@ -1,12 +1,12 @@
 ---
 gsd_state_version: '1.0'
-status: planning
+status: complete
 progress:
   total_phases: 4
-  completed_phases: 3
-  total_plans: 4
-  completed_plans: 4
-  percent: 75
+  completed_phases: 4
+  total_plans: 5
+  completed_plans: 5
+  percent: 100
 ---
 
 # Project State
@@ -16,21 +16,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-20)
 
 **Core value:** A cutover must never leave a child worse off. Either the child ends up adopted, running, with its I/O intact, or everything rolls back and it stays exactly where it was.
-**Current focus:** Phase 4: Efficiency
+**Current focus:** Milestone v1.0 Hardening complete
 
 ## Current Position
 
-Phase: 4 of 4 (Efficiency)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-10-20 — Phase 3 complete (make asan/lint/ci; CI workflow written, disabled)
+Phase: 4 of 4 (Efficiency) — complete
+Plan: 1 of 1 in current phase
+Status: Milestone complete
+Last activity: 2026-10-20 — Phase 4 complete (task/*/children lookup; idle CPU 11.3 ms/s → 52.6 µs/s)
 
-Progress: [███████▌░░] 75%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
+- Total plans completed: 5
 - Average duration: -
 - Total execution time: 0 hours
 
@@ -41,6 +41,7 @@ Progress: [███████▌░░] 75%
 | 1 | 1 | 1 | 1 |
 | 2 | 2 | 2 | 1 |
 | 3 | 1 | 1 | 1 |
+| 4 | 1 | 1 | 1 |
 
 *Updated after each plan completion*
 
@@ -58,6 +59,7 @@ Decisions are logged in the PROJECT.md Key Decisions table.
 - [Phase 2]: `procfs.c` reads from `proc_root` so unit tests can use a fixture tree. The Ctrl-C test needs python3 (skipped without it).
 - [Phase 3]: User: "do phase 3 all locally, no CI on github yet. if you build github CI, leave it disabled." The workflow is `ci/github-actions.yml`, outside `.github/workflows/`.
 - [Phase 3]: ASan and UBSan are separate builds, because UBSan ignores `log_path` in a combined build.
+- [Phase 4]: Step-level plan kept in superpowers format (`docs/superpowers/plans/2026-10-20-efficiency.md`) at the user's request; GSD phase files point to it.
 
 ### Pending Todos
 
@@ -76,5 +78,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-10-20
-Stopped at: Phase 3 complete; next is planning Phase 4
+Stopped at: Milestone v1.0 complete; next is choosing the v2 milestone (or the CONCERNS.md follow-ups)
 Resume file: None

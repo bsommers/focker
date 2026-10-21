@@ -37,11 +37,12 @@ Needs Linux 5.6+ (`pidfd_getfd`), a C11 compiler and glibc 2.32+. There are no o
 
 ```sh
 make            # builds build/focker and the example programs
-make test       # 35 unit + 117 integration tests (real processes, no root needed)
+make test       # 43 unit + 117 integration tests (real processes, no root needed)
 make unit       # just the /proc parser and sock_diag unit tests
 make asan       # both suites under ASan+LSan, then UBSan (about 45 s); any report fails
 make lint       # gcc -fanalyzer (warnings are errors) and shellcheck
 make ci         # lint + test + asan, the same steps as ci/github-actions.yml
+make idle-cost  # measure an idle supervisor's CPU and wakeups
 make demo       # narrated run → cutover → handover walkthrough
 sudo make install   # optional: /usr/local/bin/focker (PREFIX=... to change)
 ```

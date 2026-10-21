@@ -36,14 +36,14 @@ The `examples/` programs are the fixtures:
 
 Shell one-liners model specific parent behaviors: a parent that ignores TERM, one that kills its child on TERM, and nested parents.
 
-## Coverage (117 integration + 35 unit checks)
+## Coverage (117 integration + 43 unit checks)
 
 - CLI contract: usage errors exit 2, runtime errors exit 1, every `--help` succeeds, bad names, signals, timeouts and `FOCKER_FREEZE`.
 - run: foreground exit status passthrough, 127 for a missing program, duplicate names, rm.
 - cutover: dry run changes nothing; pipe takeover and drain; bystanders; tree annotations; socketpair peer takeover; a 5-thread freeze; pdeathsig swallowed with ptrace and fatal with signal; shutdown-kill swallowed; timeout rollback; KILL escalation; outsider and self refused; the target/parent conflict; grandchild generation-skip; `--from`; a target dying during thaw keeps its exit status; a SIGSTOP during the cutover is kept; a target dying before the freeze is caught by its pidfd (via the test-only `FOCKER_TEST_STALL_MS`); an already-pending signal is reported.
 - handover: PID kept, program replaced, `FOCKER_FDS` delivered, the new parent relays and reaps, and `ps -a` records it. A failed exec is logged and the family keeps answering and draining.
 - options and limits: `--no-drain`, `--no-suppress`, `--wait`; `logs -f` exits with the family; a 120-character runtime dir; 64 vs 65 targets; the 128-fd limit refused up front and freed slots reused; member history capped at 256; SIGINT from `kill` and from a pty.
-- unit (`make unit`): status fields, cmdline/comm fallback, children/descendants/threads, fds with fdinfo access modes, pending-signal OR, and sock_diag peers of a live socketpair.
+- unit (`make unit`): child lookup via `task/*/children` vs the full scan (fixture and live), status fields, cmdline/comm fallback, children/descendants/threads, fds with fdinfo access modes, pending-signal OR, and sock_diag peers of a live socketpair.
 
 ## Gaps
 

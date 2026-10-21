@@ -31,8 +31,8 @@ Milestone v1.0, Hardening. Each requirement maps to a roadmap phase.
 
 ### Efficiency
 
-- [ ] **PERF-01**: Child enumeration uses `/proc/PID/task/*/children` when available, and falls back to the full `/proc` scan
-- [ ] **PERF-02**: The idle supervisor's wakeup and CPU cost is measured and documented. The member-history limit is documented in USAGE and LIMITATIONS
+- [x] **PERF-01**: Child enumeration uses `/proc/PID/task/*/children` when available, and falls back to the full `/proc` scan
+- [x] **PERF-02**: The idle supervisor's wakeup and CPU cost is measured and documented. The member-history limit is documented in USAGE and LIMITATIONS
 
 ## v2 Requirements
 
@@ -77,8 +77,8 @@ Deferred and tracked, but not in the current roadmap.
 | BLD-01 | Phase 3 | Complete |
 | BLD-02 | Phase 3 | Complete |
 | BLD-03 | Phase 3 | Complete (disabled) |
-| PERF-01 | Phase 4 | Pending |
-| PERF-02 | Phase 4 | Pending |
+| PERF-01 | Phase 4 | Complete |
+| PERF-02 | Phase 4 | Complete |
 
 **Coverage:**
 - v1 requirements: 15 total

@@ -21,7 +21,7 @@ last_mapped_at: 2026-10-20T03:34:23Z
 - ~~`--from` silently capped at 64 children~~, ~~held-fd slots never reused~~, ~~a cutover past 128 held fds went ahead without the extra fds~~: fixed in Phase 2.
 - **The test cleanup misses orphans of a crashed supervisor:** `tests/run.sh` `cleanup()` kills `pkill -P <supervisor>` and the supervisor. If a supervisor crashed (seen with deliberately planted sanitizer bugs), its children were already reparented to the user's subreaper, so they survive the run. Killing by session (`pkill -s <supervisor pid>`, since a detached supervisor is its session's leader) would catch them.
 - **`handover` reports success before `execve`:** the reply is sent first (the socket is torn down for the exec), so if the exec fails, the client has already printed success and exited 0. The family recovers, and `focker.log` says `handover to X failed`, but the caller doesn't know.
-- **`proc_children` scans all of `/proc`**: O(number of processes) per call. It's called several times per request and once per loop iteration through `live_children()` (once a second, or per event).
+- ~~`proc_children` scans all of `/proc`~~: fixed in Phase 4 (`task/*/children`; idle cost 11.3 ms/s → 52.6 µs/s). `proc_list` (used by `tree`) still scans everything, but only per CLI call.
 
 ## Security Considerations
 

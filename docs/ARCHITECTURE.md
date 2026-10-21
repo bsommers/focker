@@ -36,7 +36,7 @@ From 1 and 2: to give a child a new parent, the new parent must be an ancestor s
 | `src/client.c` | 381 | control-socket client, `ps`, `tree`, `logs`, `rm`, `freeze`/`thaw` |
 | `src/supervisor.c` | 642 | subreaper loop, member table, drains, request dispatch, handover |
 | `src/cutover.c` | 699 | the cutover state machine |
-| `src/procfs.c` | 268 | `/proc` readers |
+| `src/procfs.c` | 318 | `/proc` readers |
 | `src/unixdiag.c` | 100 | unix socket peer lookup |
 | `src/util.c` | 203 | shared helpers |
 
@@ -146,6 +146,19 @@ Before the exec:
 
 Then `execve`. If it fails, everything is rebuilt and the family stays with focker.
 
+### 5.6 Idle cost
+
+An idle supervisor wakes once a second (the poll timeout) and once per signal or request. Each wakeup reaps, and asks whether any children are left. Child lookups (`proc_children`) read `/proc/self/task/*/children`, which lists the children each thread forked. They fall back to scanning every `/proc/PID/status` only on kernels without `CONFIG_PROC_CHILDREN`.
+
+Measured with `make idle-cost` (`tests/idle-cost.sh`): a family running `sleep 600`, sampled over 20 s from `/proc/PID/schedstat` (ns on CPU) and the context-switch counters, with about 960 processes on the system:
+
+| child lookup | CPU | wakeups |
+|---|---|---|
+| full `/proc` scan (before Phase 4) | 11.3 ms/s (1.1% of a core) | 1.5/s |
+| `task/*/children` | 52.6 µs/s | 0.95/s |
+
+The scan's cost grows with the number of processes on the machine. The `children` read's cost grows only with the supervisor's own thread and child counts.
+
 ## 6. Security model
 
 - Everything runs as the invoking user. No setuid, no capabilities.
@@ -155,4 +168,4 @@ Then `execve`. If it fails, everything is rebuilt and the family stays with fock
 
 ## 7. Testing
 
-`tests/unit.c` (`make unit`, 35 checks) runs the `procfs.c` readers against a fixture tree (`proc_root` points at a temp dir) and `unixdiag.c` against a live socketpair. `tests/run.sh` runs 117 checks against real processes in a private `FOCKER_RUNTIME_DIR`, covering the CLI contract, run/rm, pipe and socketpair cutovers, multithreaded freezing, pdeathsig under both freeze methods, shutdown-kill swallowing, timeout rollback, grandchildren, `--from`, the cutover edge cases (a target dying during thaw, a SIGSTOP during the cutover, a target dying before the freeze, an already-pending signal), `--no-drain`/`--no-suppress`/`--wait`, `logs -f`, handover with fd inheritance and reaping and its exec-failure recovery, runtime paths past `sun_path`, the 64-target/128-fd/256-member limits, and SIGINT from a tty (via python3's `pty`, skipped without python3) and from `kill`. The example programs in `examples/` are the test fixtures.
+`tests/unit.c` (`make unit`, 43 checks) runs the `procfs.c` readers against a fixture tree (`proc_root` points at a temp dir), including child lookup through `task/*/children` versus the full scan (`proc_children_scan_only`), and `unixdiag.c` against a live socketpair. `tests/run.sh` runs 117 checks against real processes in a private `FOCKER_RUNTIME_DIR`, covering the CLI contract, run/rm, pipe and socketpair cutovers, multithreaded freezing, pdeathsig under both freeze methods, shutdown-kill swallowing, timeout rollback, grandchildren, `--from`, the cutover edge cases (a target dying during thaw, a SIGSTOP during the cutover, a target dying before the freeze, an already-pending signal), `--no-drain`/`--no-suppress`/`--wait`, `logs -f`, handover with fd inheritance and reaping and its exec-failure recovery, runtime paths past `sun_path`, the 64-target/128-fd/256-member limits, and SIGINT from a tty (via python3's `pty`, skipped without python3) and from `kill`. The example programs in `examples/` are the test fixtures.

@@ -181,6 +181,18 @@ Deletes an exited family's state directory. It refuses (exit 1) while the family
 
 ---
 
+## Limits
+
+| limit | value | what happens at the limit |
+|---|---|---|
+| targets per cutover | 64 | more named PIDs is a usage error (exit 2). `--from` a parent with more than 64 children is refused (exit 1), so name up to 64 of them |
+| held fds per family | 128 | a cutover that would go past it is refused before anything is frozen. Slots of closed fds are reused |
+| remembered members per family | 256 | the oldest *dead* member is forgotten. Running members are never evicted |
+| threads per frozen process | 256 | the cutover fails and rolls back |
+| family name | 48 characters, `[A-Za-z0-9_.-]`, no leading `.` or `-` | usage error |
+
+These are compile-time constants in `src/focker.h` (`MAX_PIDS`, `MAX_STOLEN`, `MAX_MEMBERS`, `MAX_TIDS`, `NAME_MAX_LEN`).
+
 ## Environment
 
 | variable | effect |
