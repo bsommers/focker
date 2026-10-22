@@ -5,10 +5,10 @@ milestone_name: Reach
 status: planning
 progress:
   total_phases: 8
-  completed_phases: 3
-  total_plans: 3
-  completed_plans: 3
-  percent: 38
+  completed_phases: 4
+  total_plans: 4
+  completed_plans: 4
+  percent: 50
 ---
 
 # Project State
@@ -18,17 +18,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-20)
 
 **Core value:** A cutover must never leave a child worse off. Either the child ends up adopted, running, with its I/O intact, or everything rolls back and it stays exactly where it was.
-**Current focus:** Milestone v2.0 Reach, Phase 8: CRIU adoption (not planned)
+**Current focus:** Milestone v2.0 Reach, Phase 9: Stubborn parents (not planned)
 
 ## Current Position
 
 Milestone: v2.0 Reach (v1.0 Hardening shipped 2026-10-20, see .planning/MILESTONES.md)
-Phase: 8 (CRIU adoption), of phases 5-12
+Phase: 9 (Stubborn parents), of phases 5-12
 Plan: 0 of TBD in current phase
 Status: Not planned
-Last activity: 2026-10-21 — Phase 7 complete (async cutover, ASYNC-01)
+Last activity: 2026-10-22 — Phase 8 complete (CRIU adoption, CRIU-01)
 
-Progress: [███▊░░░░░░] 38% (v2.0)
+Progress: [█████░░░░░] 50% (v2.0)
 
 ## Performance Metrics
 
@@ -48,6 +48,7 @@ Progress: [███▊░░░░░░] 38% (v2.0)
 | 5 | 1 | 1 | 1 |
 | 6 | 1 | 1 | 1 |
 | 7 | 1 | 1 | 1 |
+| 8 | 1 | 1 | 1 |
 
 *Updated after each plan completion*
 
@@ -68,6 +69,8 @@ Decisions are logged in the PROJECT.md Key Decisions table.
 - [2026-10-21]: User added Phases 9-12 (stubborn parents, focker wait, invisible pause, pty takeover) from the docs/USE-CASES.md walkthroughs; CRIU stays Phase 8.
 - [Phase 6]: TCP pairing compares addresses in IPv6 form (v4 as ::ffff:a.b.c.d) so dual-stack sockets pair with v4 ones; a v6 dump failing with ENOENT/EAFNOSUPPORT/EINVAL means no v6 sockets.
 - [Phase 7]: Only the wait is async; validation, freeze, fd takeover and thaw stay inline (bounded). One job at a time; mutating requests get `busy`. A dead target that isn't a member has its exit consumed by the job, never by the reaper.
+- [Phase 8]: Yama ptrace_scope 1 blocks criu from attaching to another terminal's job; user: "then, do option 1": the user runs `sudo sysctl kernel.yama.ptrace_scope=0` themselves, and focker detects the refusal and names it. focker never runs sudo.
+- [Phase 8]: A moved job gets a new process group: terminal A's bash SIGHUPs every group still in its job table when its terminal closes. The supervisor runs criu synchronously (60 s cap per run).
 - [Phase 4]: Step-level plan kept in superpowers format (`docs/superpowers/plans/2026-10-20-efficiency.md`) at the user's request; GSD phase files point to it.
 
 ### Pending Todos
@@ -75,8 +78,6 @@ Decisions are logged in the PROJECT.md Key Decisions table.
 None yet.
 
 ### Blockers/Concerns
-
-- [Decision 2026-10-20] Phase 8 (CRIU-01): user chose (a), a capability-granted `criu`; focker stays unprivileged.
 
 - The `/gsd-*` slash commands are unavailable in Claude Code until gsd-core is installed for it (`npx @opengsd/gsd-core@latest`).
 
@@ -88,6 +89,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-10-21
-Stopped at: Phase 7 complete
+Last session: 2026-10-22
+Stopped at: Phase 8 complete
 Resume file: None

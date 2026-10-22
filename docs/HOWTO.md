@@ -115,7 +115,19 @@ focker thaw fam 4242                 # undo your manual freeze
 
 ## Processes not started under focker
 
-focker can only adopt descendants, so it can't help with a process tree that already exists elsewhere. For that, use CRIU checkpoint/restore. It recreates the process tree under whoever runs the restore:
+`focker cutover` can only adopt descendants. For a job that already runs elsewhere, say in another terminal, use `focker adopt-external`. It checkpoints the job with criu and restores it as a child of a family's supervisor:
+
+```sh
+sudo setcap cap_checkpoint_restore+eip "$(command -v criu)"   # once
+focker adopt-external --dry-run work 4242   # checks, trial dump, plan; changes nothing
+focker adopt-external work 4242             # asks, then moves PID 4242's whole job
+focker logs -f work                         # its output, until you
+focker fg work                              # attach this terminal (Ctrl-P Ctrl-Q detaches)
+```
+
+PID can be any process of the job; its process group moves, so a pipeline moves together. If the trial dump fails, the reason is criu's (for example `Connected TCP socket`) and nothing was changed. Under Yama `ptrace_scope` 1, focker prints the `sysctl` that lets criu attach. See [USAGE](USAGE.md#focker-adopt-external) for each step and [LIMITATIONS](LIMITATIONS.md) for what cannot move.
+
+What `adopt-external` does is the classic criu recipe, with the details done for you. By hand it looks like this; criu recreates the process tree under whoever runs the restore:
 
 ```sh
 sudo criu dump    -t "$PID" -D img --shell-job          # freezes, writes images, kills the original

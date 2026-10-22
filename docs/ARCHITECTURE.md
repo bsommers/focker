@@ -20,12 +20,17 @@ From 1 and 2: to give a child a new parent, the new parent must be an ancestor s
 ┌─────────────────────────────── supervisor (supervisor.c) ──────────────────────────────────┐
 │ PR_SET_CHILD_SUBREAPER · signalfd(CHLD,TERM,INT,HUP,QUIT) · poll loop                      │
 │   ├─ reaper: waitid(WNOWAIT) peek → name → waitpid → member table                          │
-│   ├─ drains: held read ends → adopted-PID-fdN.log                                          │
+│   ├─ drains: held read ends → adopted-PID-fdN.log · family pty master → focker.log         │
 │   ├─ requests: info · members · inspect · stop · cutover ─→ cutover.c · handover (execve)  │
+│   │            attach (pty master over SCM_RIGHTS) · adopt ─→ adopt.c (criu)               │
 │   ├─ cutover in flight: stepped every 20 ms round; others get busy, reads still answered   │
 │   └─ exit when no children remain (unless --linger)                                        │
 └────────────────────────────────────────────────────────────────────────────────────────────┘
       cutover.c   freeze (ptrace|signal) · fd plan + pidfd_getfd · pidfd_send_signal · verify · thaw/swallow
+      adopt.c     stop · criu dump per root · kill · new pipes + refill · criu restore per root · new pgrp
+      criu.c      adopt-external client: job discovery, refusals, trial dump, plan, prompt; criu argv
+      attach.c    focker fg: raw mode, copy both ways, Ctrl-P Ctrl-Q, takeover and exit messages
+      pty.c       open a pty, take it as the controlling terminal
       procfs.c    ppid, state, cmdline, children, threads, fds (+fdinfo access mode), pending signals
       unixdiag.c  NETLINK_SOCK_DIAG dump: unix socket inode → peer inode
       inetdiag.c  NETLINK_SOCK_DIAG dump: loopback TCP socket inode → peer inode
@@ -34,14 +39,18 @@ From 1 and 2: to give a child a new parent, the new parent must be an ancestor s
 
 | file | lines | responsibility |
 |---|---|---|
-| `src/main.c` | 569 | argument parsing, help text, `run` (including detaching) |
-| `src/client.c` | 381 | control-socket client, `ps`, `tree`, `logs`, `rm`, `freeze`/`thaw` |
-| `src/supervisor.c` | 642 | subreaper loop, member table, drains, request dispatch, handover |
-| `src/cutover.c` | 699 | the cutover state machine |
-| `src/procfs.c` | 318 | `/proc` readers |
+| `src/main.c` | 676 | argument parsing, help text, `run` |
+| `src/client.c` | 534 | control-socket client, starting a detached supervisor, `ps`, `tree`, `logs`, `rm`, `freeze`/`thaw` |
+| `src/supervisor.c` | 1012 | subreaper loop, member table, drains, family pty, request dispatch, handover |
+| `src/cutover.c` | 794 | the cutover state machine |
+| `src/criu.c` | 713 | `adopt-external` up to the move: job discovery, refusals, trial dump, plan; criu argv; `pipes-data.img` reader |
+| `src/adopt.c` | 434 | the move, in the supervisor (§5.8) |
+| `src/attach.c` | 211 | `focker fg` |
+| `src/pty.c` | 42 | pty helpers |
+| `src/procfs.c` | 372 | `/proc` readers |
 | `src/unixdiag.c` | 100 | unix socket peer lookup |
 | `src/inetdiag.c` | 190 | loopback TCP peer lookup |
-| `src/util.c` | 203 | shared helpers |
+| `src/util.c` | 268 | shared helpers |
 
 ## 3. Process layout
 
@@ -163,13 +172,35 @@ Measured with `make idle-cost` (`tests/idle-cost.sh`): a family running `sleep 6
 
 The scan's cost grows with the number of processes on the machine. The `children` read's cost grows only with the supervisor's own thread and child counts.
 
+### 5.7 Family terminals and fg
+
+A detached supervisor leads its own session, so it can give the family a terminal: it opens a pty, takes the slave as its controlling terminal (`TIOCSCTTY`), and keeps only the master. `run -d -t` starts the first command in its own group, made the terminal's foreground group (`tcsetpgrp`, with `SIGTTOU` ignored for the call), with stdio on the slave. The master sits in a held-fd slot of kind `pty` and drains into `focker.log`. When the job ends and the last slave fd closes, the kernel hangs up the slave and sends the session leader, the supervisor, a `SIGHUP` with `SI_KERNEL`. A supervisor that has had a pty ignores that one, since it is not a request to go.
+
+`focker fg` sends `attach`. The supervisor replies `ok` with the master attached (`SCM_RIGHTS`), stops draining it, and keeps the connection. `fg` puts its own terminal in raw mode and copies bytes both ways, so Ctrl-C reaches the job's terminal as a byte, and the line discipline there turns it into `SIGINT` for the job's foreground group. `SIGWINCH` copies the window size. A second `attach` gets the master too; the first connection is told `taken-over` and closed. When the job has ended and let go of the terminal, the attached connection gets `exit CODE HOW`. When the connection closes for any reason (detach, takeover, crash), the supervisor drains the master into the log again.
+
+### 5.8 adopt-external: the move
+
+The kernel never reparents a live process to a non-ancestor, so a job started elsewhere has to be recreated: criu checkpoints it and restores it with the same PIDs as children of the supervisor (it is a subreaper, and criu restores with `--restore-detached`). Everything that can fail without harm runs first, in the client, while the job keeps running: job discovery from `/proc` (the process group of PID plus every root's subtree; a *root* is a member whose parent is outside the group), the refusals, and a trial `criu dump --leave-running` of each root. The client then sends `adopt criu= pgid= root=...`; the supervisor works the job out again and refuses if it changed. Then `adopt.c`, in the request handler:
+
+1. Read terminal A's window size, and its settings if the job is its foreground group (`/proc/PID/stat` tpgid), before the stop: a stopped job hands terminal A back to its shell.
+2. `SIGSTOP` the group and every member; wait for state `T`.
+3. `criu dump --leave-stopped` per root into `STATE_DIR/criu/ROOT`. On failure: `SIGCONT`, delete the images, exit 1. The job never left.
+4. Open the new pty and take it as the supervisor's controlling terminal (terminal jobs only).
+5. `SIGKILL` the originals and wait until their PIDs are gone, reaped by their old parent. This is the point of no return.
+6. For each pipe between two roots, a new pipe, refilled from the reader's `pipes-data.img` (criu saves the buffered bytes but does not put them back into an inherited pipe).
+7. Fork a short-lived child that leads a new process group. The shell in terminal A may still list the old group as a job and sends `SIGHUP` to every group it lists when its terminal hangs up, so the job must not keep it.
+8. `criu restore --shell-job --restore-detached --leave-stopped` per root, the old group's leader first, run in the new group with stdio on the pty slave (criu gives restored terminal fds the restorer's controlling terminal) and each joining pipe's end at fd `10+k` (`--inherit-fd fd[10+k]:pipe:[INO]`). Each root then joins the new group with `setpgid`.
+9. Check every member is back, below the supervisor, roots its direct children; record them (origin `external`); make the new group the pty's foreground group; `SIGCONT`; let the group's first leader exit; delete the images.
+
+A failure after step 5 kills whatever was restored, keeps the images, and prints the criu command to retry by hand. criu runs synchronously, at most 60 s per run, and `waitpid` on its PID keeps the reaper away from it. The supervisor does not reap from inside a request.
+
 ## 6. Security model
 
-- Everything runs as the invoking user. No setuid, no capabilities.
+- Everything runs as the invoking user. No setuid, and focker itself has no capabilities. `adopt-external` needs criu to have `CAP_CHECKPOINT_RESTORE` (a file capability on the criu binary), and focker only runs it.
 - The runtime dir must be a real directory owned by the user, and the socket is created with umask 0177. Each connection's `SO_PEERCRED` uid must match.
 - ptrace and `pidfd_getfd` are allowed only on descendants (Yama scope 1) or same-uid processes (scope 0). focker never asks for more.
 - Family names are restricted to `[A-Za-z0-9_.-]`, with no leading `.` or `-`, so a name can't escape the runtime dir.
 
 ## 7. Testing
 
-`tests/unit.c` (`make unit`, 84 checks) runs the `procfs.c` readers against a fixture tree (`proc_root` points at a temp dir), including child lookup through `task/*/children` versus the full scan (`proc_children_scan_only`), `unixdiag.c` against a live socketpair, and `inetdiag.c`'s loopback classifier and live IPv4/IPv6 connection pairing, including a dual-stack socket talking to IPv4. `tests/run.sh` runs 157 checks against real processes in a private `FOCKER_RUNTIME_DIR`, covering the CLI contract, run/rm, pipe, socketpair and loopback TCP (IPv4 and IPv6) cutovers, a shared listening socket that must not be taken, multithreaded freezing, pdeathsig under both freeze methods, shutdown-kill swallowing, timeout rollback, grandchildren, `--from`, the cutover edge cases (a target dying during thaw, a SIGSTOP during the cutover, a target dying before the freeze, an already-pending signal), `--no-drain`/`--no-suppress`/`--wait`, `logs -f`, handover with fd inheritance and reaping and its exec-failure recovery, runtime paths past `sun_path`, the 64-target/128-fd/256-member limits, `release`, `ps --json`/`inspect --json`, cleanup after a crashed supervisor, and SIGINT from a tty (via python3's `pty`, skipped without python3) and from `kill`. The example programs in `examples/` are the test fixtures.
+`tests/unit.c` (`make unit`, 108 checks) runs the `procfs.c` readers against a fixture tree (`proc_root` points at a temp dir), including child lookup through `task/*/children` versus the full scan (`proc_children_scan_only`), `unixdiag.c` against a live socketpair, and `inetdiag.c`'s loopback classifier and live IPv4/IPv6 connection pairing, including a dual-stack socket talking to IPv4. `tests/run.sh` runs 262 checks against real processes in a private `FOCKER_RUNTIME_DIR`, covering the CLI contract, run/rm, pipe, socketpair and loopback TCP (IPv4 and IPv6) cutovers, a shared listening socket that must not be taken, multithreaded freezing, pdeathsig under both freeze methods, shutdown-kill swallowing, timeout rollback, grandchildren, `--from`, the cutover edge cases (a target dying during thaw, a SIGSTOP during the cutover, a target dying before the freeze, an already-pending signal), `--no-drain`/`--no-suppress`/`--wait`, `logs -f`, handover with fd inheritance and reaping and its exec-failure recovery, runtime paths past `sun_path`, the 64-target/128-fd/256-member limits, `release`, `ps --json`/`inspect --json`, cleanup after a crashed supervisor, and SIGINT from a tty (via python3's `pty`, skipped without python3) and from `kill`. `tests/ptyrun.py` runs commands on a pty for `run -t`, `fg` and the moves; `tests/mkjob.py` starts shell-style jobs (each stage allows any tracer, so the criu tests run under Yama scope 1). The `adopt-external` checks that need a capable criu skip without one. The example programs in `examples/` are the test fixtures.

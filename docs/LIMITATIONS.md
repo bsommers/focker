@@ -4,7 +4,7 @@ These come from the kernel or from deliberate scope decisions. Each entry says w
 
 ## Fundamental (kernel)
 
-- **Only descendants.** Orphans go to the nearest *ancestor* subreaper, so focker must be above the old parent from the start. There is no way to adopt an arbitrary existing process. Use CRIU for that ([HOWTO](HOWTO.md#processes-not-started-under-focker)).
+- **Only descendants.** Orphans go to the nearest *ancestor* subreaper, so focker must be above the old parent from the start. `cutover` cannot adopt an arbitrary existing process. `adopt-external` moves one anyway, by checkpointing it with criu and restoring it as the supervisor's child, within the limits below.
 - **The old parent must die.** Linux never moves a child away from a live parent. If you can't kill the parent, you can't cut over. `--timeout` rolls back.
 - **Every child of the old parent moves.** Its death orphans all of its children, not just the ones you named. focker reports them as `also adopted`. Name them, or use `--from`, so they are frozen and their fds are taken over too.
 - **SIGKILL can't be swallowed.** A `PR_SET_PDEATHSIG=SIGKILL` child dies during the cutover, as does a child that the parent SIGKILLs on its way out.
@@ -26,4 +26,10 @@ These come from the kernel or from deliberate scope decisions. Each entry says w
 - **Handover is one-way.** After `handover`, focker no longer controls the family. The new program owns everything.
 - **Requests are serialized.** One cutover at a time per family, and while one is running the supervisor doesn't drain other pipes. A cutover usually takes milliseconds, and at most `--timeout`.
 - **Limits:** 64 targets per cutover (`--from` a parent with more children is refused; name up to 64 of them instead), 128 held fds per family (a cutover that would go past it is refused before anything is frozen; slots of closed fds are reused), and 256 remembered members per family (the oldest dead members are forgotten first). The full table is in [USAGE](USAGE.md#limits).
+- **adopt-external moves what criu can move.** It refuses (before touching anything) a job with an established TCP connection, a unix socket or a pipe to a process outside the job, a process that leads a session (a shell), another user's process, or more than 64 processes, 16 roots or 16 pipes between roots. Other things criu cannot checkpoint are caught by the trial dump.
+- **adopt-external needs criu with `CAP_CHECKPOINT_RESTORE`.** Run `sudo setcap cap_checkpoint_restore+eip "$(command -v criu)"` once. focker stays unprivileged. Under Yama `ptrace_scope` 1, criu may attach only to its own descendants, so `kernel.yama.ptrace_scope=0` is needed too (focker names the sysctl); 2 or 3 rule it out.
+- **adopt-external kills the original.** Between `killed the originals (point of no return)` and the restore, the job exists only as images. A failed restore keeps them, with the criu command to retry by hand. The PIDs must still be free when it restores, which they are unless something takes them in those milliseconds.
+- **One terminal job per family.** A family holds one terminal. A terminal job joins only a detached family that has none yet; start a new family for each.
+- **A moved job gets a new process group.** The shell in the old terminal may still list the old group, and signals every group it lists when its terminal closes, so the job leaves it. A process that criu restores into the old group anyway (a root's own child in the root's group) stays there, and the transcript warns about it.
+- **adopt-external is synchronous.** criu runs inside the supervisor's request (up to 60 s per run), so the family answers no other request and drains no pipes until the move ends.
 - **Linux only**, 5.6 or later (`pidfd_getfd`, `pidfd_send_signal`, `pidfd_open`).

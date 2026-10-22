@@ -136,13 +136,54 @@ are pipes or files, for example `./job | tee out.log` started from a shell that 
 focker cutover work "$JOB"      # from another terminal, before closing the session
 ```
 
-It doesn't cover a job writing straight to the terminal. Ptys aren't taken over ([LIMITATIONS](LIMITATIONS.md)),
-and the tty hangup still reaches the job. Use reptyr or tmux for that.
+A cutover doesn't cover a job writing straight to the terminal: ptys aren't taken over
+([LIMITATIONS](LIMITATIONS.md)), and the tty hangup still reaches the job. For that, move the job with
+`adopt-external` (next section).
+
+## 8. Pick up a job from another terminal (recipe)
+
+You started something in terminal A without focker, and now you want it somewhere else: terminal A is about
+to close, or you are on another machine's ssh session (terminal B). `adopt-external` checkpoints the job with
+criu and restores it under a family, on a terminal focker holds. Its output goes to the family log until you
+attach.
+
+In terminal A, the job runs in the background (or Ctrl-Z, `bg`):
+
+```sh
+$ ./build/ticker -i 1000 &
+[1] 4242
+```
+
+In terminal B:
+
+```sh
+$ focker adopt-external work 4242
+plan: job 4242: roots 4242
+plan: processes 4242
+plan: terminal /dev/pts/3
+plan: family work (new)
+plan: images in /run/user/1000/focker/work/criu
+kill the original and restore under work? [y/N] y
+adopt: stopped job 4242 (1 process)
+adopt: dumped 4242
+adopt: killed the originals (point of no return)
+adopt: restored 4242
+adopt: job 4242 runs under work as process group 4250 on a new terminal ('focker fg' it)
+$ focker logs work        # what it printed since the move
+$ focker fg work          # attach; Ctrl-C reaches it, Ctrl-P Ctrl-Q detaches
+```
+
+The job keeps its PID and its memory; its parent is now the family's supervisor, and closing terminal A no
+longer reaches it. A pipeline moves together: name any of its PIDs. This needs criu with
+`CAP_CHECKPOINT_RESTORE`, and under Yama `ptrace_scope` 1 a sysctl that focker names. A job with a TCP
+connection open, or a pipe to a process outside it, can't move; `--dry-run` tells you before anything is
+touched ([LIMITATIONS](LIMITATIONS.md)).
 
 ## Not a fit
 
-- **Processes not started under focker.** The kernel only reparents to an ancestor. Until CRIU support lands
-  (roadmap Phase 8), use CRIU or reptyr directly.
+- **Processes that criu can't move.** The kernel only reparents to an ancestor, so a job not started under
+  focker moves only by checkpoint and restore (section 8). An established TCP connection, or a pipe or socket
+  to a process outside the job, rules that out. Use reptyr or tmux there.
 - **`systemctl restart` of a unit focker runs inside.** systemd kills the unit's whole cgroup
   (`KillMode=control-group`), adopted children included. Give each family its own unit, or don't restart the
   unit it lives in.
