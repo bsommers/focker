@@ -654,6 +654,105 @@ else
     printf '  skip  fg (needs python3)\n'
 fi
 
+echo "adopt-external"
+CRIU=$(command -v criu || echo /usr/sbin/criu)
+criu_ok=false
+# capable = criu runs without asking for the capability ('check' can fail on unrelated host limits)
+[ -x "$CRIU" ] && command -v python3 >/dev/null &&
+    ! "$CRIU" check --unprivileged 2>&1 | grep -q CAP_CHECKPOINT_RESTORE && criu_ok=true
+yama=$(cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || echo 0)
+MKJOB=(python3 "$ROOT/tests/mkjob.py")
+job() { # [mkjob options] NAME CMD...: start a job outside focker; its stage pids in J (array), launcher in JL
+    local opt=()
+    while [ "${1#--}" != "$1" ]; do opt+=("$1"); shift; done
+    local pf=$FOCKER_RUNTIME_DIR/$1.job; shift
+    "${MKJOB[@]}" "${opt[@]}" "$pf" "$@" & JL=$!
+    wait_for test -s "$pf" || return 1
+    read -ra J <"$pf"
+}
+untouched() { # the job is still running under its launcher
+    local p; for p in "${J[@]}"; do alive "$p" && [ "$(ppid_of "$p")" = "$JL" ] || return 1; done
+}
+end_job() { kill -KILL "${J[@]}" 2>/dev/null; wait "$JL" 2>/dev/null; }
+A=("$F" adopt-external)
+
+expect_rc "adopt-external needs a pid"            2 "${A[@]}" ax
+expect_rc "adopt-external pid must be a number"   2 "${A[@]}" ax abc
+out=$(FOCKER_CRIU=/nonexistent "${A[@]}" --yes ax 1 2>&1); rc=$?
+check "no criu exits 1 and says so" test $rc -eq 1 -a -n "$(grep 'criu not found' <<<"$out")"
+if [ -x "$CRIU" ] && command -v python3 >/dev/null; then
+    cp "$CRIU" "$FOCKER_RUNTIME_DIR/criu-nocap"   # a copy has no file capabilities
+    job nocap sleep 30
+    out=$(FOCKER_CRIU=$FOCKER_RUNTIME_DIR/criu-nocap "${A[@]}" --yes ax "${J[0]}" 2>&1); rc=$?
+    check "adopt-external without a capable criu exits 1" test $rc -eq 1
+    check "and names the setcap command" grep -q "sudo setcap cap_checkpoint_restore+eip $FOCKER_RUNTIME_DIR/criu-nocap" <<<"$out"
+    check "and leaves the job alone" untouched
+    end_job
+else
+    printf '  skip  adopt-external without capability (needs criu and python3)\n'
+fi
+
+if $criu_ok; then
+    "$F" run -d -n am -- sleep 30 >/dev/null
+    wait_for test -n "$(old_of am)"
+    out=$("${A[@]}" --yes ax "$(old_of am)" 2>&1); rc=$?
+    check "refuses a focker member" test $rc -eq 1 -a -n "$(grep 'already in family am' <<<"$out")"
+    out=$("${A[@]}" --yes ax "$(sup_of am)" 2>&1); rc=$?
+    check "refuses a focker supervisor" test $rc -eq 1 -a -n "$(grep 'already in family am' <<<"$out")"
+    stop_family am
+    out=$("${A[@]}" --yes ax $$ 2>&1); rc=$?
+    check "refuses the job that runs focker itself" test $rc -eq 1 -a -n "$(grep 'includes focker' <<<"$out")"
+    python3 -c 'import os; os.setsid(); os.execvp("sleep", ["sleep", "30"])' & sl=$!
+    wait_for test "$(ps -o sid= -p $sl | tr -d ' ')" = "$sl"
+    out=$("${A[@]}" --yes ax $sl 2>&1); rc=$?
+    check "refuses a session leader" test $rc -eq 1 -a -n "$(grep 'leads its own session' <<<"$out")"
+    kill $sl; wait $sl 2>/dev/null
+
+    job --leak leak "$B/ticker" -i 50
+    out=$("${A[@]}" --yes ax "${J[0]}" 2>&1); rc=$?
+    check "refuses a job whose pipe leads outside it" test $rc -eq 1 -a -n "$(grep "leads to $JL outside the job" <<<"$out")"
+    check "and leaves it alone" untouched
+    end_job
+
+    job tcp python3 -c 'import socket,time; l=socket.create_server(("127.0.0.1",0)); c=socket.create_connection(l.getsockname()); a,_=l.accept(); time.sleep(60)'
+    sleep 0.5
+    out=$("${A[@]}" --yes ax "${J[0]}" 2>&1); rc=$?
+    check "refuses a job with an established TCP connection" test $rc -eq 1 -a -n "$(grep 'Connected TCP socket' <<<"$out")"
+    check "and says nothing was changed" grep -q 'nothing was changed' <<<"$out"
+    check "and leaves that job alone" untouched
+    end_job
+
+    job pipe "$B/ticker" -i 50 '|' cat
+    out=$("${A[@]}" --dry-run ax "${J[1]}" 2>&1); rc=$?
+    check "--dry-run succeeds" test $rc -eq 0
+    check "--dry-run plans a pipeline's roots" grep -q "^plan: job ${J[0]}: roots ${J[0]} ${J[1]}\$" <<<"$out"
+    check "--dry-run names the terminal" grep -q '^plan: no terminal' <<<"$out"
+    check "--dry-run names the family" grep -q '^plan: family ax (new)' <<<"$out"
+    check "--dry-run leaves the job alone" untouched
+    out=$("${A[@]}" ax "${J[0]}" 2>&1 </dev/null); rc=$?
+    check "no --yes and stdin not a terminal exits 1" test $rc -eq 1 -a -n "$(grep -- '--yes' <<<"$out")"
+    check "and nothing changed" untouched
+    out=$("${PTYRUN[@]}" --timeout 20 --send 'n\n@1' -- "${A[@]}" ax "${J[0]}" 2>&1); rc=$?
+    check "the prompt asks before anything is stopped" grep -q 'kill the original and restore under ax? \[y/N\]' <<<"$out"
+    check "answering n exits 1" test $rc -eq 1
+    check "and nothing changed after n" untouched
+    check "and no family was made" test ! -e "$FOCKER_RUNTIME_DIR/ax"
+    end_job
+
+    if [ "$yama" != 0 ]; then
+        job --no-ptracer yama sleep 30
+        out=$("${A[@]}" --yes ax "${J[0]}" 2>&1); rc=$?
+        check "under Yama, names the sysctl that allows it" \
+            test $rc -eq 1 -a -n "$(grep 'sudo sysctl kernel.yama.ptrace_scope=0' <<<"$out")"
+        check "and leaves the unptraceable job alone" untouched
+        end_job
+    else
+        printf '  skip  Yama message (ptrace_scope is 0)\n'
+    fi
+else
+    printf '  skip  adopt-external with criu (needs a criu with cap_checkpoint_restore, and python3)\n'
+fi
+
 echo
 echo "$pass passed, $fail failed"
 for t in "${failed[@]}"; do echo "  failed: $t"; done

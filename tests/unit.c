@@ -416,6 +416,80 @@ static void test_tcp(void)
     test_tcp_mapped();
 }
 
+static int roots_of(const struct procent *ps, const pid_t *pgids, int n, pid_t pgid, pid_t *roots)
+{
+    return job_roots(ps, n, pgids, pgid, roots, MAX_ROOTS);
+}
+
+static void test_job_roots(void)
+{
+    puts("job roots");
+    pid_t r[MAX_ROOTS];
+    /* pid, ppid (sorted by pid, as proc_list returns them) and each one's pgid */
+    const struct procent ps[] = { { 1, 0 },   { 50, 1 },  { 60, 50 }, { 61, 50 }, { 62, 50 }, { 63, 50 },
+                                  { 70, 50 }, { 71, 70 }, { 72, 71 }, { 80, 50 }, { 85, 95 }, { 90, 50 },
+                                  { 95, 50 } };
+    const pid_t pg[] = { 1, 50, 60, 61, 61, 61, 70, 70, 70, 90, 95, 90, 95 };
+    int n = (int)(sizeof ps / sizeof ps[0]);
+    CHECK("a single process is its own root", roots_of(ps, pg, n, 60, r) == 1 && r[0] == 60);
+    CHECK("a pipeline's siblings are each a root",
+          roots_of(ps, pg, n, 61, r) == 3 && r[0] == 61 && r[1] == 62 && r[2] == 63);
+    CHECK("children in the group are not roots", roots_of(ps, pg, n, 70, r) == 1 && r[0] == 70);
+    CHECK("roots come back sorted by pid", roots_of(ps, pg, n, 90, r) == 2 && r[0] == 80 && r[1] == 90);
+    CHECK("a child with a lower pid than its parent", roots_of(ps, pg, n, 95, r) == 1 && r[0] == 95);
+    CHECK("an empty group has no roots", roots_of(ps, pg, n, 4242, r) == 0);
+    CHECK("too many roots fails", job_roots(ps, n, pg, 61, r, 2) < 0);
+}
+
+static void join(char **argv, int argc, char *out, size_t len)
+{
+    out[0] = '\0';
+    for (int i = 0; i < argc; i++)
+        snprintf(out + strlen(out), len - strlen(out), "%s%s", i ? " " : "", argv[i]);
+}
+
+static void test_criu_argv(void)
+{
+    puts("criu argv");
+    struct criu_job j = { .pgid = 61, .roots = { 61, 62 }, .nroots = 2, .pipes = { 4242, 77 }, .npipes = 2 };
+    char *argv[64], got[1024];
+    int argc = criu_dump_argv("/x/criu", &j, 62, "/run/img", true, argv, 64);
+    join(argv, argc, got, sizeof got);
+    CHECK("a trial dump leaves the job running",
+          strcmp(got, "/x/criu dump --unprivileged --shell-job -t 62 -D /run/img -o dump.log --leave-running") == 0);
+    CHECK("argv ends with NULL", argv[argc] == NULL);
+    argc = criu_dump_argv("/x/criu", &j, 61, "/run/img", false, argv, 64);
+    join(argv, argc, got, sizeof got);
+    CHECK("the real dump leaves it stopped",
+          strcmp(got, "/x/criu dump --unprivileged --shell-job -t 61 -D /run/img -o dump.log --leave-stopped") == 0);
+
+    const int none[] = { -1, -1 }, one[] = { 5, -1 };
+    argc = criu_restore_argv("/x/criu", &j, "/run/img", none, argv, 64);
+    join(argv, argc, got, sizeof got);
+    CHECK("restore without pipes",
+          strcmp(got, "/x/criu restore --unprivileged --shell-job --restore-detached -D /run/img -o restore.log "
+                      "--pidfile /run/img/restored.pid --leave-stopped") == 0);
+    argc = criu_restore_argv("/x/criu", &j, "/run/img", one, argv, 64);
+    join(argv, argc, got, sizeof got);
+    CHECK("restore hands over the pipes this root holds",
+          strcmp(got, "/x/criu restore --unprivileged --shell-job --restore-detached -D /run/img -o restore.log "
+                      "--pidfile /run/img/restored.pid --leave-stopped --inherit-fd fd[5]:pipe:[4242]") == 0);
+    CHECK("too small an argv fails", criu_dump_argv("/x/criu", &j, 61, "/run/img", true, argv, 4) < 0);
+}
+
+static void test_stat_fields(void)
+{
+    puts("stat fields");
+    proc_root = root;
+    PUT("300/stat", "300 (a (b) c) S 1 290 280 34817 290 4194304 0 0\n");
+    PUT("300/status", "Name:\tx\nUid:\t1000\t1000\t1000\t1000\n");
+    CHECK("pgid", proc_pgid(300) == 290);
+    CHECK("sid", proc_sid(300) == 280);
+    CHECK("tty_nr", proc_tty_nr(300) == 34817);
+    CHECK("uid", proc_uid(300) == 1000);
+    CHECK("a missing pid", proc_pgid(999) == -1 && proc_tty_nr(999) < 0 && proc_uid(999) == (uid_t)-1);
+}
+
 int main(void)
 {
     build_fixture();
@@ -430,6 +504,9 @@ int main(void)
     test_live();
     test_loopback();
     test_tcp();
+    test_stat_fields();
+    test_job_roots();
+    test_criu_argv();
     char cmd[PATH_MAX + 16];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", root);
     if (system(cmd) != 0)

@@ -59,6 +59,10 @@ bool     proc_is_descendant(pid_t pid, pid_t ancestor);
 int      proc_threads(pid_t pid, pid_t *out, int max);
 int      proc_fds(pid_t pid, struct fdent *out, int max);
 uint64_t proc_sigpending(pid_t pid);                  /* shared + every thread's private set */
+pid_t    proc_pgid(pid_t pid);                        /* -1 if gone */
+pid_t    proc_sid(pid_t pid);                         /* -1 if gone */
+int      proc_tty_nr(pid_t pid);                      /* /proc/PID/stat field 7: 0 none, -1 gone */
+uid_t    proc_uid(pid_t pid);                         /* real uid, (uid_t)-1 if gone */
 
 /* unixdiag.c */
 int           unixdiag_load(void);
@@ -141,6 +145,32 @@ int cmd_tree(const char *name);
 int cmd_logs(const char *name, pid_t adopted, bool follow);
 int cmd_rm(const char *name, bool quiet);
 int cmd_signal_pids(const char *name, const pid_t *pids, int n, bool stop);
+
+/* criu.c: moving a job from another terminal (adopt-external) */
+#define MAX_ROOTS 16
+struct criu_job {
+    pid_t pgid;
+    pid_t roots[MAX_ROOTS];     /* group members whose parent is outside the group; each is dumped on its own */
+    int   nroots;
+    pid_t members[MAX_PIDS];    /* the group plus every root's subtree */
+    int   nmembers;
+    bool  tty;
+    int   tty_nr;               /* the job's terminal, as /proc/PID/stat encodes it */
+    unsigned long pipes[MAX_ROOTS]; /* inodes of pipes joining two roots */
+    int   npipes;
+};
+int job_roots(const struct procent *ps, int n, const pid_t *pgids, pid_t pgid, pid_t *roots, int max); /* -1 if > max */
+int criu_find(char *path, size_t len);                /* $FOCKER_CRIU, else criu on PATH */
+int criu_capable(const char *criu, char *why, size_t len); /* 1 capable, 0 not (why says so) */
+int criu_job_load(pid_t pid, struct criu_job *j, char *why, size_t len);
+/* argv builders: argc, or -1 if max is too small. The strings live in a static
+ * arena per builder, valid until that builder's next call. pipe_fds[k] is the
+ * restorer's fd for j->pipes[k], or -1 if this root holds no end of it. */
+int criu_dump_argv(const char *criu, const struct criu_job *j, pid_t root, const char *dir, bool trial, char **argv,
+                   int max);
+int criu_restore_argv(const char *criu, const struct criu_job *j, const char *dir, const int *pipe_fds, char **argv,
+                      int max);
+int cmd_adopt_external(const char *name, pid_t pid, bool yes, bool dry_run);
 
 /* attach.c */
 int cmd_fg(const char *name);

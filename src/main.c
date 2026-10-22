@@ -27,6 +27,7 @@ static const char *USAGE =
     "  inspect   show a family's members and the fds it holds\n"
     "  logs      print a family's log, or an adopted child's captured output\n"
     "  fg        attach this terminal to a family's terminal (Ctrl-P Ctrl-Q detaches)\n"
+    "  adopt-external  move a job from another terminal into a family (needs criu)\n"
     "  freeze    stop processes in a family with SIGSTOP\n"
     "  thaw      resume processes in a family with SIGCONT\n"
     "  stop      signal a family's direct children (default SIGTERM)\n"
@@ -508,6 +509,51 @@ static int cmd_fg_main(int argc, char **argv)
     return cmd_fg(argv[1]);
 }
 
+static const char *ADOPT_USAGE =
+    "usage: focker adopt-external [-y] [--dry-run] NAME PID\n"
+    "\n"
+    "Move the job containing PID (its whole process group, so a pipeline moves together),\n"
+    "started in another terminal, into family NAME, using criu to checkpoint it and\n"
+    "restore it as focker's child. NAME is joined if running, else started (detached,\n"
+    "lingering). A job on a terminal gets a new one focker holds: its output goes to\n"
+    "'focker logs NAME' until 'focker fg NAME'.\n"
+    "\n"
+    "Everything that can be checked is checked first, with a trial dump while the job\n"
+    "keeps running; then you are asked before the original is stopped and killed.\n"
+    "\n"
+    "  -y, --yes         don't ask\n"
+    "      --dry-run     check and print the plan; change nothing\n"
+    "  -h, --help        show this help\n"
+    "\n"
+    "Needs criu with CAP_CHECKPOINT_RESTORE (sudo setcap cap_checkpoint_restore+eip $(command -v criu)),\n"
+    "and, under Yama ptrace_scope 1, kernel.yama.ptrace_scope=0. $FOCKER_CRIU picks the criu binary.\n";
+
+static int cmd_adopt_external_main(int argc, char **argv)
+{
+    static const struct option opts[] = { { "yes", no_argument, 0, 'y' },
+                                           { "dry-run", no_argument, 0, 'D' },
+                                           { "help", no_argument, 0, 'h' },
+                                           { 0, 0, 0, 0 } };
+    bool yes = false, dry_run = false;
+    int c;
+    while ((c = getopt_long(argc, argv, "yh", opts, NULL)) != -1) {
+        switch (c) {
+        case 'y': yes = true; break;
+        case 'D': dry_run = true; break;
+        case 'h': fputs(ADOPT_USAGE, stdout); return FK_OK;
+        default: return usage_error(ADOPT_USAGE, NULL, NULL);
+        }
+    }
+    if (argc - optind != 2)
+        return usage_error(ADOPT_USAGE, "expected a family name and a pid%s", "");
+    if (need_name(argv[optind], ADOPT_USAGE) != FK_OK)
+        return FK_USAGE;
+    pid_t pid;
+    if (parse_pid(argv[optind + 1], &pid) < 0)
+        return usage_error(ADOPT_USAGE, "bad pid '%s'", argv[optind + 1]);
+    return cmd_adopt_external(argv[optind], pid, yes, dry_run);
+}
+
 static int cmd_named(int argc, char **argv)
 {
     char usage[128];
@@ -660,6 +706,8 @@ int main(int argc, char **argv)
         return cmd_logs_main(argc, argv);
     if (strcmp(cmd, "fg") == 0)
         return cmd_fg_main(argc, argv);
+    if (strcmp(cmd, "adopt-external") == 0)
+        return cmd_adopt_external_main(argc, argv);
     if (strcmp(cmd, "freeze") == 0 || strcmp(cmd, "thaw") == 0)
         return cmd_freeze_thaw(argc, argv);
     if (strcmp(cmd, "stop") == 0)
