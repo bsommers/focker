@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <unistd.h>
 
 extern char **environ;
@@ -27,6 +28,7 @@ static char sockpath[PATH_MAX + 16];
 static pid_t first_pid;
 static int first_status = -1;
 static bool linger_;
+static int fam_pty = -1; /* slot of the family's pty master in fam.stolen, or -1 */
 
 /* the cutover in flight, if any: its job, the client waiting for the reply,
  * and the transcript so far. The wait for the old parents spans loop rounds. */
@@ -213,6 +215,38 @@ static void drain(struct stolen *s)
     close(s->fd);
     close(s->logfd);
     s->fd = s->logfd = -1;
+}
+
+/* the family's terminal: the supervisor leads its session, so the slave becomes
+ * its controlling terminal and the job's; the supervisor keeps only the master */
+static int open_family_pty(int *slave)
+{
+    int master;
+    if (fam.nstolen == MAX_STOLEN || pty_open(&master, slave, NULL, NULL) < 0)
+        return -1;
+    char logpath[PATH_MAX + 16];
+    snprintf(logpath, sizeof logpath, "%s/focker.log", fam.dir);
+    int logfd = open(logpath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+    if (logfd < 0 || pty_take_ctty(*slave) < 0) {
+        int e = errno;
+        if (logfd >= 0)
+            close(logfd);
+        close(master);
+        close(*slave);
+        errno = e;
+        return -1;
+    }
+    fam_pty = fam.nstolen++;
+    struct stolen *s = &fam.stolen[fam_pty];
+    memset(s, 0, sizeof *s);
+    s->fd = master;
+    s->logfd = logfd;
+    s->old_parent = getpid();
+    s->child_fd = 0;
+    s->drain = true;
+    snprintf(s->kind, sizeof s->kind, "pty");
+    snprintf(s->log, sizeof s->log, "%s", logpath);
+    return 0;
 }
 
 /* ---- control requests ----------------------------------------------------- */
@@ -628,25 +662,10 @@ static void handle_client(int cfd)
 
 /* ---- main loop ------------------------------------------------------------ */
 
-int supervisor_run(const char *name, const char *dir, char **argv, bool detached, bool linger, int ready_fd)
+/* fork and exec the first command; on a pty (slave >= 0) it leads the
+ * terminal's foreground group. 0, FK_FAIL, or 127 if it could not exec. */
+static int start_first(char **argv, bool detached, int slave)
 {
-    static char prefix[NAME_MAX_LEN + 16];
-    snprintf(prefix, sizeof prefix, "focker[%s]", name);
-    log_prefix = prefix;
-    snprintf(fam.name, sizeof fam.name, "%s", name);
-    snprintf(fam.dir, sizeof fam.dir, "%s", dir);
-    snprintf(sockpath, sizeof sockpath, "%s/control.sock", dir);
-    linger_ = linger;
-
-    if (prctl(PR_SET_CHILD_SUBREAPER, 1) < 0) {
-        logmsg("cannot become a child subreaper: %s", strerror(errno));
-        return FK_FAIL;
-    }
-    if (setup_signals() < 0 || setup_socket() < 0) {
-        logmsg("cannot set up control socket %s: %s", sockpath, strerror(errno));
-        return FK_FAIL;
-    }
-
     int errpipe[2];
     if (pipe2(errpipe, O_CLOEXEC) < 0) {
         logmsg("pipe: %s", strerror(errno));
@@ -655,12 +674,23 @@ int supervisor_run(const char *name, const char *dir, char **argv, bool detached
     first_pid = fork();
     if (first_pid < 0) {
         logmsg("fork: %s", strerror(errno));
+        close(errpipe[0]);
+        close(errpipe[1]);
         return FK_FAIL;
     }
     if (first_pid == 0) {
         close(errpipe[0]);
         if (detached)
             setpgid(0, 0); /* own group, parented inside focker's session: never an orphaned pgrp */
+        if (slave >= 0) {
+            /* take the foreground before exec, so the command never starts as a background job */
+            signal(SIGTTOU, SIG_IGN);
+            tcsetpgrp(slave, getpid());
+            signal(SIGTTOU, SIG_DFL);
+            dup2(slave, 0);
+            dup2(slave, 1);
+            dup2(slave, 2);
+        }
         signal(SIGPIPE, SIG_DFL);
         sigprocmask(SIG_SETMASK, &saved_mask, NULL);
         execvp(argv[0], argv);
@@ -681,19 +711,60 @@ int supervisor_run(const char *name, const char *dir, char **argv, bool detached
         unlink(sockpath);
         return 127;
     }
+    return 0;
+}
 
-    struct member *m = family_member(&fam, first_pid, true);
-    m->origin = 'r';
-    proc_cmdline(first_pid, m->cmd, sizeof m->cmd);
-    if (!m->cmd[0] || m->cmd[0] == '[')
-        snprintf(m->cmd, sizeof m->cmd, "%s", argv[0]);
+int supervisor_run(const char *name, const char *dir, char **argv, bool detached, bool linger, bool tty,
+                   int ready_fd)
+{
+    static char prefix[NAME_MAX_LEN + 16];
+    snprintf(prefix, sizeof prefix, "focker[%s]", name);
+    log_prefix = prefix;
+    snprintf(fam.name, sizeof fam.name, "%s", name);
+    snprintf(fam.dir, sizeof fam.dir, "%s", dir);
+    snprintf(sockpath, sizeof sockpath, "%s/control.sock", dir);
+    linger_ = linger;
+
+    if (prctl(PR_SET_CHILD_SUBREAPER, 1) < 0) {
+        logmsg("cannot become a child subreaper: %s", strerror(errno));
+        return FK_FAIL;
+    }
+    if (setup_signals() < 0 || setup_socket() < 0) {
+        logmsg("cannot set up control socket %s: %s", sockpath, strerror(errno));
+        return FK_FAIL;
+    }
+
+    int slave = -1;
+    if (tty && open_family_pty(&slave) < 0) {
+        logmsg("cannot set up a terminal: %s", strerror(errno));
+        unlink(sockpath);
+        return FK_FAIL;
+    }
+    struct member *m = NULL;
+    if (argv) {
+        int rc = start_first(argv, detached, slave);
+        if (rc != 0)
+            return rc;
+        m = family_member(&fam, first_pid, true);
+        m->origin = 'r';
+        proc_cmdline(first_pid, m->cmd, sizeof m->cmd);
+        if (!m->cmd[0] || m->cmd[0] == '[')
+            snprintf(m->cmd, sizeof m->cmd, "%s", argv[0]);
+        if (fam_pty >= 0)
+            fam.stolen[fam_pty].child = first_pid;
+    }
+    if (slave >= 0)
+        close(slave);
 
     char text[256];
     snprintf(text, sizeof text, "%d\n", getpid());
     write_file("pid", text);
-    snprintf(text, sizeof text, "%s\n", m->cmd);
+    snprintf(text, sizeof text, "%s\n", m ? m->cmd : "");
     write_file("cmd", text);
-    logmsg("supervisor %d started %d (%s)", getpid(), first_pid, m->cmd);
+    if (m)
+        logmsg("supervisor %d started %d (%s)", getpid(), first_pid, m->cmd);
+    else
+        logmsg("supervisor %d started", getpid());
     if (ready_fd >= 0) {
         if (write(ready_fd, "1", 1) < 0) { /* launcher went away; carry on */ }
         close(ready_fd);

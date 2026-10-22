@@ -37,13 +37,14 @@ static const char *USAGE =
     "Exit codes: 0 success, 1 failure, 2 usage error.\n";
 
 static const char *RUN_USAGE =
-    "usage: focker run [-n NAME] [-d] [-l] [--] CMD [ARG...]\n"
+    "usage: focker run [-n NAME] [-d [-t]] [-l] [--] CMD [ARG...]\n"
     "\n"
     "Start a family. focker marks itself PR_SET_CHILD_SUBREAPER and runs CMD as its\n"
     "child (the first, \"old\" parent). Anything orphaned below it lands on focker.\n"
     "\n"
     "  -n, --name NAME   family name (default: random, like suspicious_jack)\n"
     "  -d, --detach      run in the background; output goes to 'focker logs NAME'\n"
+    "  -t, --tty         with -d: run CMD on a terminal that focker holds\n"
     "  -l, --linger      keep running when the family has no processes left\n"
     "  -h, --help        show this help\n"
     "\n"
@@ -190,22 +191,26 @@ static int cmd_run(int argc, char **argv)
     static const struct option opts[] = { { "name", required_argument, 0, 'n' },
                                            { "detach", no_argument, 0, 'd' },
                                            { "linger", no_argument, 0, 'l' },
+                                           { "tty", no_argument, 0, 't' },
                                            { "help", no_argument, 0, 'h' },
                                            { 0, 0, 0, 0 } };
     const char *name = NULL;
-    bool detach = false, linger = false;
+    bool detach = false, linger = false, tty = false;
     int c;
-    while ((c = getopt_long(argc, argv, "+n:dlh", opts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "+n:dlth", opts, NULL)) != -1) {
         switch (c) {
         case 'n': name = optarg; break;
         case 'd': detach = true; break;
         case 'l': linger = true; break;
+        case 't': tty = true; break;
         case 'h': fputs(RUN_USAGE, stdout); return FK_OK;
         default: return usage_error(RUN_USAGE, NULL, NULL);
         }
     }
     if (optind >= argc)
         return usage_error(RUN_USAGE, "missing command%s", "");
+    if (tty && !detach)
+        return usage_error(RUN_USAGE, "-t needs -d (a foreground family already has your terminal)%s", "");
     char gen[NAME_MAX_LEN + 1];
     if (!name) {
         random_name(gen, sizeof gen);
@@ -233,7 +238,7 @@ static int cmd_run(int argc, char **argv)
     char **cmd = argv + optind;
 
     if (!detach) {
-        int rc = supervisor_run(name, dir, cmd, false, linger, -1);
+        int rc = supervisor_run(name, dir, cmd, false, linger, false, -1);
         if (rc == 127) /* never started: free the name */
             cmd_rm(name, true);
         return rc;
@@ -265,7 +270,7 @@ static int cmd_run(int argc, char **argv)
         dup2(log, 1);
         dup2(log, 2);
         setvbuf(stdout, NULL, _IOLBF, 0);
-        _exit(supervisor_run(name, dir, cmd, true, linger, ready[1]));
+        _exit(supervisor_run(name, dir, cmd, true, linger, tty, ready[1]));
     }
     close(ready[1]);
     char b;

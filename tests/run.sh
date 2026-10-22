@@ -541,6 +541,21 @@ else
     printf '  skip  Ctrl-C (needs python3 for a pty)\n'
 fi
 
+echo "pty families"
+expect_rc "run -t without -d is a usage error"   2 "$F" run -t -n x true
+"$F" run -d -t -n tty1 -- sh -c 'tty; stty size; sleep 30' >/dev/null
+check "a tty family's command sees a terminal" wait_for grep -qs '^/dev/pts/' "$FOCKER_RUNTIME_DIR/tty1/focker.log"
+check "inspect lists the pty" grep -q 'pty' <<<"$("$F" inspect tty1 2>&1)"
+T=$(old_of tty1)
+check "the command is the terminal's foreground group" \
+    test -n "$T" -a "$(ps -o tpgid= -p "$T" | tr -d ' ')" = "$(ps -o pgid= -p "$T" | tr -d ' ')"
+stop_family tty1
+"$F" run -d -t -n tty2 -- sh -c 'exit 4' >/dev/null
+check "a tty family exits when its command does" wait_for grep -qs 'exited 4' "$FOCKER_RUNTIME_DIR/tty2/exit"
+"$F" run -d -t -n tty3 -- sh -c 'seq 1 20000; echo last-words' >/dev/null
+wait_for test -f "$FOCKER_RUNTIME_DIR/tty3/exit"
+check "a tty family's last output reaches the log" grep -q '^last-words' "$FOCKER_RUNTIME_DIR/tty3/focker.log"
+
 echo
 echo "$pass passed, $fail failed"
 for t in "${failed[@]}"; do echo "  failed: $t"; done

@@ -84,7 +84,7 @@ struct stolen {
     pid_t child, old_parent;
     int   parent_fd, child_fd;
     bool  drain;
-    char  kind[8];      /* pipe-r, pipe-w, unix, tcp */
+    char  kind[8];      /* pipe-r, pipe-w, unix, tcp, pty */
     char  log[PATH_MAX + 64];
 };
 
@@ -122,8 +122,15 @@ int  cutover_step(struct cutover_job *job, struct sbuf *out);
 int  cutover_cancel(struct cutover_job *job, const char *why, struct sbuf *out); /* rolls back; returns 1 */
 bool cutover_owns(const struct cutover_job *job, pid_t pid);                      /* pid is one of its targets */
 
-/* supervisor.c */
-int supervisor_run(const char *name, const char *dir, char **argv, bool detached, bool linger, int ready_fd);
+/* pty.c: both fds O_CLOEXEC, the slave O_NOCTTY; tio/ws may be NULL (kernel defaults) */
+struct termios;
+struct winsize;
+int pty_open(int *master, int *slave, const struct termios *tio, const struct winsize *ws);
+int pty_take_ctty(int slave);                         /* TIOCSCTTY for the calling session leader */
+
+/* supervisor.c: argv NULL starts no first command; tty (needs detached) runs it on a focker-held pty */
+int supervisor_run(const char *name, const char *dir, char **argv, bool detached, bool linger, bool tty,
+                   int ready_fd);
 
 /* client.c */
 int client_request(const char *name, char **args, int nargs, struct sbuf *reply); /* 0 ok, 1 err, -1 unreachable */
