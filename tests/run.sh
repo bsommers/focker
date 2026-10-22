@@ -620,6 +620,12 @@ if command -v python3 >/dev/null; then
     check "fg after the job exited reports its status" test $rc -eq 7
     stop_family fg3
 
+    tty_fam fg5 'echo up; sleep 1; (sleep 2; echo LATE) & exit 5'
+    out=$("${PTYRUN[@]}" --timeout 10 -- "$F" fg fg5 2>&1); rc=$?
+    check "fg stays while something still holds the terminal after the leader exits" grep -q LATE <<<"$out"
+    check "and then exits with the leader's status" test $rc -eq 5
+    stop_family fg5
+
     "$F" run -d -n fg4 -- sleep 30 >/dev/null
     out=$("${PTYRUN[@]}" --timeout 3 -- "$F" fg fg4 2>&1); rc=$?
     check "fg on a family without a terminal exits 1" test $rc -eq 1
@@ -769,6 +775,21 @@ if $criu_ok; then
     check "Ctrl-C reaches the moved job" test $rc -eq 130
     stop_family mv1
 
+    # a shell script: its child is in its process group, and must move into the new one with it
+    pf=$FOCKER_RUNTIME_DIR/mvsh.pid
+    term_a mvsh
+    type_a "set -m; $PT sh -c 'echo \$\$ >$pf; $PT sleep 1000; echo after' &"
+    wait_for test -s "$pf"; T=$(cat "$pf"); wait_for pgrep -P "$T" >/dev/null; SK=$(kids_of "$T")
+    out=$("${A[@]}" --yes mvsh "$T" 2>&1); rc=$?
+    check "a shell script moves with its child" test $rc -eq 0 -a "$(ppid_of "$SK")" = "$T"
+    check "its child is in the script's new group" \
+        test "$(ps -o pgid= -p "$SK" | tr -d ' ')" = "$(ps -o pgid= -p "$T" | tr -d ' ')"
+    check "and nothing stays in the old group" lacks 'stays in process group' "$out"
+    kill -KILL "$TA"; wait "$TA" 2>/dev/null
+    sleep 1
+    check "closing terminal A reaches neither the script nor its child" test -n "$(alive "$T" && alive "$SK" && echo y)"
+    stop_family mvsh
+
     # a pipeline in terminal A, moved mid-stream: every line arrives exactly once
     term_a mv2
     cat >"$FOCKER_RUNTIME_DIR/slow.py" <<'EOF'
@@ -820,7 +841,16 @@ EOF
     sleep 0.3
     check "a failed dump resumes the job where it was" untouched
     check "and does not leave it stopped" bash -c "! [ \"\$(ps -o stat= -p ${J[0]} | cut -c1)\" = T ]"
-    end_job; stop_family fd1
+    end_job
+    pf=$FOCKER_RUNTIME_DIR/fdfg.pid
+    term_a fdfg
+    type_a "set -m; $PT sh -c 'echo \$\$ >$pf; exec $B/ticker -i 200'"   # in the foreground
+    wait_for test -s "$pf"; T=$(cat "$pf")
+    out=$("${A[@]}" --yes fd1 "$T" 2>&1); rc=$?
+    check "a failed dump of a foreground job says it is in the background now" \
+        test $rc -eq 1 -a -n "$(grep "background in its terminal; 'fg' there" <<<"$out")"
+    kill -KILL "$TA" "$T"; wait "$TA" 2>/dev/null
+    stop_family fd1
 
     # shellcheck disable=SC2016 # the wrapper's own $1 and $@
     printf '#!/bin/sh\n[ "$1" = restore ] && exit 1\nexec %s "$@"\n' "$CRIU" >"$FOCKER_RUNTIME_DIR/criu-norestore"

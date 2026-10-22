@@ -711,3 +711,51 @@ int criu_pipe_data(const unsigned char *img, size_t len, unsigned long ino, size
     }
     return 0;
 }
+
+/* ---- pstree.img ------------------------------------------------------------ */
+
+static size_t put_varint(unsigned char *p, unsigned long v)
+{
+    size_t n = 0;
+    do {
+        p[n++] = (unsigned char)((v & 0x7f) | (v > 0x7f ? 0x80 : 0));
+        v >>= 7;
+    } while (v);
+    return n;
+}
+
+int criu_pstree_regroup(const unsigned char *in, size_t len, unsigned long from, unsigned long to, unsigned char *out,
+                        size_t cap)
+{
+    if (len < 8 || cap < 8)
+        return -1;
+    memcpy(out, in, 8); /* the image's magic */
+    size_t at = 8, o = 8;
+    while (at < len) {
+        if (len - at < 4)
+            return -1;
+        size_t elen = (size_t)in[at] | (size_t)in[at + 1] << 8 | (size_t)in[at + 2] << 16 | (size_t)in[at + 3] << 24;
+        at += 4;
+        if (elen > len - at || cap - o < 4)
+            return -1;
+        size_t lenpos = o;
+        o += 4;
+        const unsigned char *p = in + at, *end = p + elen;
+        while (p < end) { /* PstreeEntry: varint fields only (pid 1, ppid 2, pgid 3, sid 4, threads 5) */
+            unsigned long tag, v;
+            if (!varint(&p, end, &tag) || (tag & 7) != 0 || !varint(&p, end, &v))
+                return -1;
+            if (tag >> 3 == 3 && v == from)
+                v = to;
+            if (cap - o < 20)
+                return -1;
+            o += put_varint(out + o, tag);
+            o += put_varint(out + o, v);
+        }
+        size_t n = o - lenpos - 4;
+        out[lenpos] = (unsigned char)n, out[lenpos + 1] = (unsigned char)(n >> 8);
+        out[lenpos + 2] = (unsigned char)(n >> 16), out[lenpos + 3] = (unsigned char)(n >> 24);
+        at += elen;
+    }
+    return (int)o;
+}

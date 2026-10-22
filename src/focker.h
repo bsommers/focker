@@ -182,6 +182,9 @@ void criu_log_error(const char *log, pid_t root, char *why, size_t len); /* why 
 void rm_tree(const char *dir);
 /* the buffered data of pipe ino in a pipes-data.img held in img[0..len): 1 found (img[*off..+*n), the pipe's
  * size in *size), 0 not there, -1 malformed */
+/* pstree.img in[0..len) with every pgid equal to from set to to, into out; its length, or -1 */
+int criu_pstree_regroup(const unsigned char *in, size_t len, unsigned long from, unsigned long to, unsigned char *out,
+                        size_t cap);
 int criu_pipe_data(const unsigned char *img, size_t len, unsigned long ino, size_t *off, size_t *n,
                    unsigned long *size);
 

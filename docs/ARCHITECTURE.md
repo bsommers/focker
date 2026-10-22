@@ -184,15 +184,16 @@ The kernel never reparents a live process to a non-ancestor, so a job started el
 
 1. Read terminal A's window size, and its settings if the job is its foreground group (`/proc/PID/stat` tpgid), before the stop: a stopped job hands terminal A back to its shell.
 2. `SIGSTOP` the group and every member; wait for state `T`.
-3. `criu dump --leave-stopped` per root into `STATE_DIR/criu/ROOT`. On failure: `SIGCONT`, delete the images, exit 1. The job never left.
+3. `criu dump --leave-stopped` per root into `STATE_DIR/criu/ROOT`.
 4. Open the new pty and take it as the supervisor's controlling terminal (terminal jobs only).
-5. `SIGKILL` the originals and wait until their PIDs are gone, reaped by their old parent. This is the point of no return.
-6. For each pipe between two roots, a new pipe, refilled from the reader's `pipes-data.img` (criu saves the buffered bytes but does not put them back into an inherited pipe).
-7. Fork a short-lived child that leads a new process group. The shell in terminal A may still list the old group as a job and sends `SIGHUP` to every group it lists when its terminal hangs up, so the job must not keep it.
-8. `criu restore --shell-job --restore-detached --leave-stopped` per root, the old group's leader first, run in the new group with stdio on the pty slave (criu gives restored terminal fds the restorer's controlling terminal) and each joining pipe's end at fd `10+k` (`--inherit-fd fd[10+k]:pipe:[INO]`). Each root then joins the new group with `setpgid`.
+5. Fork a short-lived child that leads a new process group. The shell in terminal A may still list the old group as a job and sends `SIGHUP` to every group it lists when its terminal hangs up, so no process of the job may keep it. In the old group leader's `pstree.img`, every pgid equal to the old group becomes the new one. With `--shell-job`, criu restores a task whose group leader is not in the images into the restorer's own group, which is the new group. That covers the leader's children in its group too, which `setpgid` from the supervisor could not move.
+   Any failure in steps 3-5: `SIGCONT`, delete the images, exit 1. The job never left. A job that was in the foreground of terminal A is in the background there now, since the stop handed the terminal back to its shell, and the transcript says so.
+6. `SIGKILL` the originals and wait until their PIDs are gone, reaped by their old parent. This is the point of no return.
+7. For each pipe between two roots, a new pipe, refilled from the reader's `pipes-data.img` (criu saves the buffered bytes but does not put them back into an inherited pipe).
+8. `criu restore --shell-job --restore-detached --leave-stopped` per root, the old group's leader first, run in the new group with stdio on the pty slave (criu gives restored terminal fds the restorer's controlling terminal) and each joining pipe's end at fd `10+k` (`--inherit-fd fd[10+k]:pipe:[INO]`). A root not in the new group joins it with `setpgid`.
 9. Check every member is back, below the supervisor, roots its direct children; record them (origin `external`); make the new group the pty's foreground group; `SIGCONT`; let the group's first leader exit; delete the images.
 
-A failure after step 5 kills whatever was restored, keeps the images, and prints the criu command to retry by hand. criu runs synchronously, at most 60 s per run, and `waitpid` on its PID keeps the reaper away from it. The supervisor does not reap from inside a request.
+A failure after step 6 kills whatever was restored, keeps the images, and prints the criu command to retry by hand. criu runs synchronously, at most 60 s per run, and `waitpid` on its PID keeps the reaper away from it. The supervisor does not reap from inside a request.
 
 ## 6. Security model
 

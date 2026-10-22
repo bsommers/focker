@@ -153,8 +153,8 @@ void release_stolen_for(struct family *f, pid_t child)
 {
     for (int i = 0; i < f->nstolen; i++) {
         struct stolen *s = &f->stolen[i];
-        if (s->child != child || s->fd < 0 || s->drain)
-            continue; /* read ends drain until EOF on their own */
+        if (s->child != child || s->fd < 0 || s->drain || strcmp(s->kind, "pty") == 0)
+            continue; /* read ends drain until EOF on their own; a pty stays until nothing holds its slave */
         close(s->fd);
         s->fd = -1;
     }

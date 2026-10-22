@@ -158,6 +158,39 @@ static void end_group(pid_t pid, int hold)
         ;
 }
 
+/* make criu restore the group led by root into criu's own group: with
+ * --shell-job, criu moves every task whose group's leader is not in the
+ * images into the restorer's group, so the leader's pgid becomes grp, which
+ * is not in the images either */
+static int regroup(const char *dir, pid_t root, pid_t grp, char *why, size_t len)
+{
+    char path[PATH_MAX + 64], tmp[PATH_MAX + 64];
+    snprintf(path, sizeof path, "%.*s/pstree.img", PATH_MAX, dir);
+    snprintf(tmp, sizeof tmp, "%.*s/pstree.img.new", PATH_MAX, dir);
+    int rc = -1;
+    unsigned char *in = NULL, *out = NULL;
+    struct stat st = { 0 };
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd >= 0 && fstat(fd, &st) == 0 && (in = malloc((size_t)st.st_size + 1)) &&
+        (out = malloc((size_t)st.st_size * 2 + 64)) && read(fd, in, (size_t)st.st_size) == st.st_size) {
+        int n = criu_pstree_regroup(in, (size_t)st.st_size, (unsigned long)root, (unsigned long)grp, out,
+                                    (size_t)st.st_size * 2 + 64);
+        int w = n < 0 ? -1 : open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+        if (w >= 0) {
+            rc = write(w, out, (size_t)n) == n && close(w) == 0 && rename(tmp, path) == 0 ? 0 : -1;
+            if (rc < 0)
+                unlink(tmp);
+        }
+    }
+    if (rc < 0)
+        snprintf(why, len, "cannot rewrite %s for the new process group", path);
+    if (fd >= 0)
+        close(fd);
+    free(in);
+    free(out);
+    return rc;
+}
+
 static bool exited_ok(int st)
 {
     return st >= 0 && WIFEXITED(st) && WEXITSTATUS(st) == 0;
@@ -235,11 +268,15 @@ int adopt_run(struct family *f, const struct criu_job *j, const char *criu, int 
     bool have_tio = false, have_ws = false;
     if (j->tty)
         read_terminal(j, &tio, &have_tio, &ws, &have_ws);
+    /* the stop hands a foreground job's terminal back to its shell, so a resumed job runs in the background */
+    const char *where = j->tty && proc_tpgid(j->roots[0]) == j->pgid
+                            ? "continues, in the background in its terminal; 'fg' there brings it back"
+                            : "continues where it was";
 
     signal_all(j, SIGSTOP);
     if (!settle(j, 'T')) {
         signal_all(j, SIGCONT);
-        note(out, "could not stop job %d (did it end?); it continues where it was", j->pgid);
+        note(out, "could not stop job %d (did it end?); it %s", j->pgid, where);
         return 1;
     }
     note(out, "stopped job %d (%d process%s)", j->pgid, j->nmembers, j->nmembers == 1 ? "" : "es");
@@ -280,11 +317,28 @@ int adopt_run(struct family *f, const struct criu_job *j, const char *criu, int 
         }
         rc = -1;
     }
+    /* the new group, made before the kill so its leader cannot take a PID the job needs */
+    int hold = -1;
+    pid_t grp = 0;
+    if (rc == 0 && (grp = new_group(&hold)) < 0) {
+        snprintf(why, sizeof why, "cannot start a process group: %s", strerror(errno));
+        grp = 0;
+        rc = -1;
+    }
+    for (int r = 0; r < j->nroots && rc == 0; r++)
+        if (j->roots[r] == j->pgid)
+            rc = regroup(sub[r], j->pgid, grp, why, sizeof why);
     if (rc < 0) {
+        end_group(grp, hold);
+        if (slave >= 0) {
+            close(*master);
+            close(slave);
+            *master = slave = -1;
+        }
         signal_all(j, SIGCONT);
         for (int r = 0; r < j->nroots; r++)
             rm_tree(sub[r]);
-        note(out, "dump failed: %s; job %d continues where it was", why, j->pgid);
+        note(out, "dump failed: %s; job %d %s", why, j->pgid, where);
         return 1;
     }
 
@@ -321,7 +375,7 @@ int adopt_run(struct family *f, const struct criu_job *j, const char *criu, int 
         }
     }
 
-    /* 4. restore each root into the new group, the old group's leader first */
+    /* 4. restore each root into the new group (criu runs in it), the old group's leader first */
     int order[MAX_ROOTS] = { 0 }, no = 0;
     for (int r = 0; r < j->nroots; r++)
         if (j->roots[r] == j->pgid)
@@ -329,12 +383,6 @@ int adopt_run(struct family *f, const struct criu_job *j, const char *criu, int 
     for (int r = 0; r < j->nroots; r++)
         if (j->roots[r] != j->pgid)
             order[no++] = r;
-    int hold = -1;
-    pid_t grp = failed < 0 ? new_group(&hold) : 0;
-    if (grp < 0) {
-        snprintf(why, sizeof why, "fork: %s", strerror(errno));
-        failed = 0;
-    }
     int restored = 0;
     for (; failed < 0 && restored < j->nroots; restored++) {
         int r = order[restored];

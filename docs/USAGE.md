@@ -165,7 +165,7 @@ What happens, in order:
 2. **The plan** (`plan: job PGID: roots ...`, `plan: processes ...`, the terminal, the family, the images directory), then `kill the original and restore under NAME? [y/N]`. Without `--yes` stdin must be a terminal.
 3. **The move**, in the family's supervisor. Each step prints one `adopt:` line:
    - `adopt: stopped job PGID (N processes)`: every process gets `SIGSTOP`.
-   - `adopt: dumped ROOT`, once per root (a process of the job whose parent is outside it; a pipeline has one per stage), into `STATE_DIR/criu/ROOT`. If a dump fails, the job is sent `SIGCONT` and runs on where it was: `adopt: dump failed: REASON; job PGID continues where it was`, exit 1.
+   - `adopt: dumped ROOT`, once per root (a process of the job whose parent is outside it; a pipeline has one per stage), into `STATE_DIR/criu/ROOT`. If a dump fails, the job is sent `SIGCONT` and runs on where it was: `adopt: dump failed: REASON; job PGID continues where it was`, exit 1. A job that was in the foreground of its terminal is in the background there now (the stop handed the terminal back to its shell): the line then ends `continues, in the background in its terminal; 'fg' there brings it back`.
    - `adopt: killed the originals (point of no return)`.
    - `adopt: restored ROOT`, once per root, as a child of the supervisor, stopped. Pipes between the roots are recreated with the bytes they held.
    - `adopt: job PGID runs under NAME as process group G`: every process got `SIGCONT`. The images are deleted.
