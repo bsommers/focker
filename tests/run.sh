@@ -555,6 +555,13 @@ check "a tty family exits when its command does" wait_for grep -qs 'exited 4' "$
 "$F" run -d -t -n tty3 -- sh -c 'seq 1 20000; echo last-words' >/dev/null
 wait_for test -f "$FOCKER_RUNTIME_DIR/tty3/exit"
 check "a tty family's last output reaches the log" grep -q '^last-words' "$FOCKER_RUNTIME_DIR/tty3/focker.log"
+if command -v python3 >/dev/null; then
+    PTYRUN=(python3 "$ROOT/tests/ptyrun.py")
+    out=$("${PTYRUN[@]}" -- sh -c 'tty; exit 3' 2>&1); rc=$?
+    check "ptyrun runs a command on a terminal" test $rc -eq 3 -a -n "$(grep '^/dev/pts/' <<<"$out")"
+else
+    printf '  skip  ptyrun (needs python3)\n'
+fi
 
 echo
 echo "$pass passed, $fail failed"
