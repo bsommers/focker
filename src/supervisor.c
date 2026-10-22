@@ -29,6 +29,8 @@ static pid_t first_pid;
 static int first_status = -1;
 static bool linger_;
 static int fam_pty = -1; /* slot of the family's pty master in fam.stolen, or -1 */
+static int attached_cfd = -1; /* the 'focker fg' connection holding the pty, or -1 */
+static int pty_status = -1;   /* the pty job's status once reaped */
 
 /* the cutover in flight, if any: its job, the client waiting for the reply,
  * and the transcript so far. The wait for the old parents spans loop rounds. */
@@ -181,6 +183,8 @@ static void reap_children(void)
         }
         if (pid == first_pid)
             first_status = st;
+        if (fam_pty >= 0 && pid == fam.stolen[fam_pty].child)
+            pty_status = st;
         logmsg("%d (%s) %s", pid, m ? m->cmd : "?", describe_status(st));
         release_stolen_for(&fam, pid);
     }
@@ -247,6 +251,71 @@ static int open_family_pty(int *slave)
     snprintf(s->kind, sizeof s->kind, "pty");
     snprintf(s->log, sizeof s->log, "%s", logpath);
     return 0;
+}
+
+static int status_code(int st)
+{
+    return WIFEXITED(st) ? WEXITSTATUS(st) : WIFSIGNALED(st) ? 128 + WTERMSIG(st) : 1;
+}
+
+/* tell the attached 'fg' how the job ended, once it has ended and let go of the terminal */
+static void notify_pty_exit(void)
+{
+    if (attached_cfd < 0 || pty_status < 0)
+        return;
+    if (fam.stolen[fam_pty].fd >= 0 && live_children() > 0)
+        return; /* something still holds the terminal */
+    dprintf(attached_cfd, "exit %d %s\n", status_code(pty_status), describe_status(pty_status));
+    close(attached_cfd);
+    attached_cfd = -1;
+}
+
+/* the fg client went away (detach, takeover, crash): the log gets the output again */
+static void detach_client(void)
+{
+    close(attached_cfd);
+    attached_cfd = -1;
+    struct stolen *s = &fam.stolen[fam_pty];
+    if (s->fd >= 0)
+        s->drain = true;
+}
+
+/* attach: reply "ok\n" carrying the pty master (SCM_RIGHTS) and keep the
+ * connection; a newer attach takes the terminal over. */
+static int do_attach(int cfd, struct sbuf *out)
+{
+    if (fam_pty < 0) {
+        sb_printf(out, "%s has no terminal\n", fam.name);
+        return 1;
+    }
+    struct stolen *s = &fam.stolen[fam_pty];
+    char ok[] = "ok\n";
+    struct iovec iov = { .iov_base = ok, .iov_len = 3 };
+    union { struct cmsghdr h; char buf[CMSG_SPACE(sizeof(int))]; } u;
+    struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1 };
+    if (s->fd >= 0) {
+        memset(&u, 0, sizeof u);
+        msg.msg_control = u.buf;
+        msg.msg_controllen = sizeof u.buf;
+        struct cmsghdr *c = CMSG_FIRSTHDR(&msg);
+        c->cmsg_level = SOL_SOCKET;
+        c->cmsg_type = SCM_RIGHTS;
+        c->cmsg_len = CMSG_LEN(sizeof(int));
+        memcpy(CMSG_DATA(c), &s->fd, sizeof(int));
+    }
+    if (sendmsg(cfd, &msg, MSG_NOSIGNAL) != 3) {
+        sb_printf(out, "attach: %s\n", strerror(errno));
+        return 1;
+    }
+    if (attached_cfd >= 0) {
+        dprintf(attached_cfd, "taken-over\n");
+        close(attached_cfd);
+        logmsg("terminal taken over by another fg");
+    }
+    attached_cfd = cfd;
+    s->drain = false;
+    notify_pty_exit();
+    return -1; /* reply sent; the connection stays open */
 }
 
 /* ---- control requests ----------------------------------------------------- */
@@ -648,6 +717,8 @@ static void handle_client(int cfd)
         rc = do_stop(args, nargs, &out);
     else if (strcmp(args[0], "handover") == 0)
         rc = do_handover(args, nargs, cfd, &out);
+    else if (strcmp(args[0], "attach") == 0)
+        rc = do_attach(cfd, &out);
     else
         sb_printf(&out, "unknown request '%s'\n", args[0]);
     if (rc < 0) { /* reply already sent and cfd closed, or deferred to finish_inflight */
@@ -772,19 +843,25 @@ int supervisor_run(const char *name, const char *dir, char **argv, bool detached
 
     for (;;) {
         reap_children();
+        notify_pty_exit();
         if (!linger_ && live_children() == 0 && !inflight.job)
             break;
 
-        struct pollfd pfd[2 + MAX_STOLEN];
-        int idx[2 + MAX_STOLEN];
+        struct pollfd pfd[3 + MAX_STOLEN];
+        int idx[3 + MAX_STOLEN];
         nfds_t n = 0;
         pfd[n++] = (struct pollfd){ .fd = sfd, .events = POLLIN };
         pfd[n++] = (struct pollfd){ .fd = lfd, .events = POLLIN };
         for (int i = 0; i < fam.nstolen; i++)
-            if (fam.stolen[i].fd >= 0 && fam.stolen[i].drain) {
+            if (fam.stolen[i].fd >= 0 && (fam.stolen[i].drain || i == fam_pty)) {
+                /* an attached pty is not read here, only watched for its hangup */
                 idx[n] = i;
-                pfd[n++] = (struct pollfd){ .fd = fam.stolen[i].fd, .events = POLLIN };
+                pfd[n++] = (struct pollfd){ .fd = fam.stolen[i].fd, .events = fam.stolen[i].drain ? POLLIN : 0 };
             }
+        if (attached_cfd >= 0) { /* events 0: woken only when fg closes the connection */
+            idx[n] = -1;
+            pfd[n++] = (struct pollfd){ .fd = attached_cfd, .events = 0 };
+        }
         if (poll(pfd, n, inflight.job ? 20 : 1000) < 0 && errno != EINTR) {
             logmsg("poll: %s", strerror(errno));
             break;
@@ -795,6 +872,8 @@ int supervisor_run(const char *name, const char *dir, char **argv, bool detached
             while (read(sfd, &si, sizeof si) == sizeof si) {
                 if (si.ssi_signo == SIGCHLD)
                     continue; /* reaped at the top of the loop */
+                if (si.ssi_signo == SIGHUP && si.ssi_code == SI_KERNEL && fam_pty >= 0)
+                    continue; /* the family's own pty hung up (its master closed), not a request to go */
                 /* roll back first: the targets must not be left frozen when the family is told to go */
                 if (inflight.job) {
                     finish_inflight(cutover_cancel(inflight.job, signame((int)si.ssi_signo), &inflight.out));
@@ -826,15 +905,29 @@ int supervisor_run(const char *name, const char *dir, char **argv, bool detached
                 continue;
             }
         }
-        for (nfds_t i = 2; i < n; i++)
-            if (pfd[i].revents)
-                drain(&fam.stolen[idx[i]]);
+        for (nfds_t i = 2; i < n; i++) {
+            if (!pfd[i].revents)
+                continue;
+            if (idx[i] < 0) {
+                detach_client();
+                continue;
+            }
+            struct stolen *s = &fam.stolen[idx[i]];
+            if (s->drain) {
+                drain(s);
+            } else { /* the job let go of the attached pty: fg reads the rest from its own copy */
+                logmsg("pty from %d closed (child %d fd %d)", s->old_parent, s->child, s->child_fd);
+                close(s->fd);
+                close(s->logfd);
+                s->fd = s->logfd = -1;
+            }
+        }
     }
+    notify_pty_exit();
+    if (attached_cfd >= 0)
+        close(attached_cfd);
 
-    int code = 0;
-    if (first_status >= 0)
-        code = WIFEXITED(first_status) ? WEXITSTATUS(first_status)
-             : WIFSIGNALED(first_status) ? 128 + WTERMSIG(first_status) : 1;
+    int code = first_status >= 0 ? status_code(first_status) : 0;
     char exit_text[128];
     snprintf(exit_text, sizeof exit_text, "%s\n", first_status >= 0 ? describe_status(first_status) : "exited");
     write_file("exit", exit_text);

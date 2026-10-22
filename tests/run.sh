@@ -555,12 +555,103 @@ check "a tty family exits when its command does" wait_for grep -qs 'exited 4' "$
 "$F" run -d -t -n tty3 -- sh -c 'seq 1 20000; echo last-words' >/dev/null
 wait_for test -f "$FOCKER_RUNTIME_DIR/tty3/exit"
 check "a tty family's last output reaches the log" grep -q '^last-words' "$FOCKER_RUNTIME_DIR/tty3/focker.log"
+"$F" run -d -t -l -n tty4 -- sh -c 'exit 4' >/dev/null
+wait_for bash -c "'$F' inspect tty4 2>/dev/null | grep -q 'exited 4'"
+sleep 0.3
+check "a lingering tty family outlives its command" test -S "$FOCKER_RUNTIME_DIR/tty4/control.sock"
+stop_family tty4
 if command -v python3 >/dev/null; then
     PTYRUN=(python3 "$ROOT/tests/ptyrun.py")
     out=$("${PTYRUN[@]}" -- sh -c 'tty; exit 3' 2>&1); rc=$?
     check "ptyrun runs a command on a terminal" test $rc -eq 3 -a -n "$(grep '^/dev/pts/' <<<"$out")"
 else
     printf '  skip  ptyrun (needs python3)\n'
+fi
+
+echo "fg"
+if command -v python3 >/dev/null; then
+    PTYRUN=(python3 "$ROOT/tests/ptyrun.py")
+    # reads lines until EOF and echoes them; a Ctrl-C is trapped, not fatal
+    # shellcheck disable=SC2016 # expanded by the job's shell
+    JOB='trap "echo got-INT; i=1" INT; echo ready; while i=; do if read l; then echo "echo:$l"; elif [ -z "$i" ]; then break; fi; done; exit 7'
+    tty_fam() { # [-l] NAME CMD: start a tty family and wait for its first output
+        local opt=(); [ "$1" = -l ] && { opt=(-l); shift; }
+        "$F" run -d -t "${opt[@]}" -n "$1" -- sh -c "$2" >/dev/null && wait_for grep -qs . "$FOCKER_RUNTIME_DIR/$1/focker.log"
+    }
+    log_size() { stat -c %s "$FOCKER_RUNTIME_DIR/$1/focker.log"; }
+    log_grew() { [ "$(log_size "$1")" -gt "$2" ]; }   # NAME SIZE
+
+    tty_fam fg1 "$JOB"
+    wait_for grep -qs '^ready' "$FOCKER_RUNTIME_DIR/fg1/focker.log"
+    out=$("${PTYRUN[@]}" --stty-check --timeout 5 --send 'hi\n@0.3' --send '\x10a\n@0.5' --send '\x03@0.8' \
+          --send '\x10\x11@1.2' -- "$F" fg fg1 2>&1); rc=$?
+    check "fg shows the job's output and passes input" grep -q 'echo:hi' <<<"$out"
+    check "Ctrl-C reaches the job" grep -q 'got-INT' <<<"$out"
+    check "Ctrl-P then another key is passed through" grep -aq $'echo:\x10a' <<<"$out"
+    check "Ctrl-P Ctrl-Q detaches, exit 0" test $rc -eq 0
+    check "fg restores the terminal on detach" test $rc -ne 99
+    check "the job outlives the detach" alive "$(old_of fg1)"
+
+    tty_fam fgw 'while sleep 0.05; do stty size; done'
+    out=$("${PTYRUN[@]}" --rows 33 --cols 77 --timeout 5 --send '\x10\x11@1' -- "$F" fg fgw 2>&1)
+    check "the job sees fg's window size" grep -q '^33 77' <<<"$out"
+    s1=$(log_size fgw)
+    check "output goes back to the log after detach" wait_for log_grew fgw "$s1"
+    s1=$(log_size fgw)
+    "${PTYRUN[@]}" --timeout 5 --send '\x10\x11@1' -- "$F" fg fgw >/dev/null 2>&1
+    check "the log pauses while a terminal is attached" test "$(log_size fgw)" -le $((s1 + 32))
+    stop_family fgw
+
+    tty_fam fg2 "$JOB"
+    "${PTYRUN[@]}" --stty-check --timeout 6 -- "$F" fg fg2 >"$FOCKER_RUNTIME_DIR/fg2.out1" 2>&1 & p1=$!
+    sleep 0.5
+    out=$("${PTYRUN[@]}" --stty-check --timeout 5 --send 'x\n@0.5' --send '\x10\x11@1' -- "$F" fg fg2 2>&1); rc=$?
+    wait "$p1"; rc1=$?
+    check "a second fg takes over" test $rc1 -eq 0 -a $rc -eq 0
+    check "the first fg says so" grep -q 'taken over by another terminal' "$FOCKER_RUNTIME_DIR/fg2.out1"
+    check "the second fg gets the job's output" grep -q 'echo:x' <<<"$out"
+    out=$("${PTYRUN[@]}" --stty-check --timeout 5 --send '\x04@0.3' -- "$F" fg fg2 2>&1); rc=$?
+    check "fg exits with the job's exit code" test $rc -eq 7
+    check "fg says how the job ended" grep -q 'fg2: exited 7' <<<"$out"
+
+    tty_fam -l fg3 'echo bye; exit 7'
+    wait_for bash -c "'$F' inspect fg3 | grep -q 'exited 7'"
+    "${PTYRUN[@]}" --timeout 3 -- "$F" fg fg3 >/dev/null 2>&1; rc=$?
+    check "fg after the job exited reports its status" test $rc -eq 7
+    stop_family fg3
+
+    "$F" run -d -n fg4 -- sleep 30 >/dev/null
+    out=$("${PTYRUN[@]}" --timeout 3 -- "$F" fg fg4 2>&1); rc=$?
+    check "fg on a family without a terminal exits 1" test $rc -eq 1
+    check "and says it has no terminal" grep -q 'fg4 has no terminal' <<<"$out"
+    stop_family fg4
+    expect_rc "fg needs a terminal"                1 "$F" fg fg1 </dev/null
+    expect_rc "fg on an unknown family"            1 "${PTYRUN[@]}" --timeout 3 -- "$F" fg nosuchfam
+    expect_rc "fg without a name"                  2 "$F" fg
+
+    "${PTYRUN[@]}" --stty-check --timeout 6 -- "$F" fg fg1 >/dev/null 2>&1 & p1=$!
+    wait_for pgrep -P "$p1" >/dev/null; sleep 0.3
+    kill -TERM "$(pgrep -P "$p1")"
+    wait "$p1"; rc=$?
+    check "fg restores the terminal when killed" test $rc -ne 99 -a $rc -ne 124
+    "${PTYRUN[@]}" --stty-check --timeout 6 -- "$F" fg fg1 >"$FOCKER_RUNTIME_DIR/fg1.out" 2>&1 & p1=$!
+    sleep 0.5
+    kill -KILL "$(sup_of fg1)"
+    wait "$p1"; rc=$?
+    check "fg restores the terminal when the supervisor dies" test $rc -eq 1
+    check "fg says the supervisor went away" grep -q 'supervisor went away' "$FOCKER_RUNTIME_DIR/fg1.out"
+
+    "$F" run -d -t -n fgcut -- "$B/oldparent" 2 -- -i 50 >/dev/null
+    wait_for has_grandchild "$(sup_of fgcut)"
+    SUP=$(sup_of fgcut) P=$(old_of fgcut); T=$(kids_of "$P" | head -1)
+    "$F" cutover --wait -t 5 fgcut "$T" >/dev/null 2>&1 & cpid=$!
+    wait_for frozen_by "$T" "$SUP"
+    out=$("${PTYRUN[@]}" --timeout 4 --send '\x10\x11@1' -- "$F" fg fgcut 2>&1); rc=$?
+    check "fg is answered during a cutover" test $rc -eq 0 -a -n "$(grep 'tick' <<<"$out")"
+    kill "$P"; wait "$cpid"
+    stop_family fgcut
+else
+    printf '  skip  fg (needs python3)\n'
 fi
 
 echo

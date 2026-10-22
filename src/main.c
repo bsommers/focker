@@ -26,6 +26,7 @@ static const char *USAGE =
     "  tree      show a family's process tree\n"
     "  inspect   show a family's members and the fds it holds\n"
     "  logs      print a family's log, or an adopted child's captured output\n"
+    "  fg        attach this terminal to a family's terminal (Ctrl-P Ctrl-Q detaches)\n"
     "  freeze    stop processes in a family with SIGSTOP\n"
     "  thaw      resume processes in a family with SIGCONT\n"
     "  stop      signal a family's direct children (default SIGTERM)\n"
@@ -482,6 +483,31 @@ static int cmd_inspect(int argc, char **argv)
     return simple_request(name, args, json ? 2 : 1);
 }
 
+static const char *FG_USAGE =
+    "usage: focker fg NAME\n"
+    "\n"
+    "Attach this terminal to the terminal of family NAME (one started with 'run -d -t'):\n"
+    "you see the job's output, and your keys, Ctrl-C and window size reach it.\n"
+    "One terminal at a time: a second 'fg' takes the job over and the first exits.\n"
+    "\n"
+    "  Ctrl-P Ctrl-Q     detach; the job keeps running and its output goes to 'focker logs NAME'\n"
+    "  -h, --help        show this help\n"
+    "\n"
+    "When the job ends, fg exits with its exit status (128+N if killed by signal N).\n";
+
+static int cmd_fg_main(int argc, char **argv)
+{
+    if (wants_help(argc, argv)) {
+        fputs(FG_USAGE, stdout);
+        return FK_OK;
+    }
+    if (argc != 2)
+        return usage_error(FG_USAGE, "expected exactly one family name%s", "");
+    if (need_name(argv[1], FG_USAGE) != FK_OK)
+        return FK_USAGE;
+    return cmd_fg(argv[1]);
+}
+
 static int cmd_named(int argc, char **argv)
 {
     char usage[128];
@@ -632,6 +658,8 @@ int main(int argc, char **argv)
         return cmd_named(argc, argv);
     if (strcmp(cmd, "logs") == 0)
         return cmd_logs_main(argc, argv);
+    if (strcmp(cmd, "fg") == 0)
+        return cmd_fg_main(argc, argv);
     if (strcmp(cmd, "freeze") == 0 || strcmp(cmd, "thaw") == 0)
         return cmd_freeze_thaw(argc, argv);
     if (strcmp(cmd, "stop") == 0)

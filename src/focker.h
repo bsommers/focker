@@ -134,11 +134,15 @@ int supervisor_run(const char *name, const char *dir, char **argv, bool detached
 
 /* client.c */
 int client_request(const char *name, char **args, int nargs, struct sbuf *reply); /* 0 ok, 1 err, -1 unreachable */
+int client_attach(const char *name, int *master, int *conn); /* 0, 1 (err printed), -1 unreachable */
 int client_info(const char *name, pid_t *pid, int *nchildren, char *cmd, size_t cmdlen);
 int cmd_ps(bool all, bool json);
 int cmd_tree(const char *name);
 int cmd_logs(const char *name, pid_t adopted, bool follow);
 int cmd_rm(const char *name, bool quiet);
 int cmd_signal_pids(const char *name, const pid_t *pids, int n, bool stop);
+
+/* attach.c */
+int cmd_fg(const char *name);
 
 #endif

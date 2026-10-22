@@ -14,7 +14,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-int client_request(const char *name, char **args, int nargs, struct sbuf *reply)
+static int connect_family(const char *name)
 {
     char dir[PATH_MAX];
     if (family_dir(name, dir, sizeof dir) < 0)
@@ -35,6 +35,14 @@ int client_request(const char *name, char **args, int nargs, struct sbuf *reply)
     }
     if (dfd >= 0)
         close(dfd);
+    return fd;
+}
+
+int client_request(const char *name, char **args, int nargs, struct sbuf *reply)
+{
+    int fd = connect_family(name);
+    if (fd < 0)
+        return -1;
     for (int i = 0; i < nargs; i++) {
         size_t n = strlen(args[i]) + 1;
         if (send(fd, args[i], n, MSG_NOSIGNAL) != (ssize_t)n) {
@@ -71,6 +79,53 @@ int client_request(const char *name, char **args, int nargs, struct sbuf *reply)
     memmove(reply->p, reply->p + skip, reply->len - skip + 1);
     reply->len -= skip;
     return rc;
+}
+
+int client_attach(const char *name, int *master, int *conn)
+{
+    int fd = connect_family(name);
+    if (fd < 0)
+        return -1;
+    if (send(fd, "attach", 7, MSG_NOSIGNAL) != 7) {
+        close(fd);
+        return -1;
+    }
+    shutdown(fd, SHUT_WR);
+    char head[3];
+    union { struct cmsghdr h; char buf[CMSG_SPACE(sizeof(int))]; } u;
+    struct iovec iov = { .iov_base = head, .iov_len = sizeof head };
+    struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1, .msg_control = u.buf, .msg_controllen = sizeof u.buf };
+    ssize_t n;
+    while ((n = recvmsg(fd, &msg, MSG_CMSG_CLOEXEC | MSG_WAITALL)) < 0 && errno == EINTR)
+        ;
+    *master = -1;
+    for (struct cmsghdr *c = n > 0 ? CMSG_FIRSTHDR(&msg) : NULL; c; c = CMSG_NXTHDR(&msg, c))
+        if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_RIGHTS)
+            memcpy(master, CMSG_DATA(c), sizeof(int));
+    if (n == 3 && memcmp(head, "ok\n", 3) == 0) {
+        *conn = fd;
+        return 0;
+    }
+    if (*master >= 0)
+        close(*master);
+    *master = -1;
+    if (n != 3 || memcmp(head, "err", 3) != 0) {
+        close(fd);
+        errno = n < 0 ? errno : EPROTO;
+        return -1;
+    }
+    char buf[4096];
+    struct sbuf why = { 0 };
+    while ((n = read(fd, buf, sizeof buf)) > 0 || (n < 0 && errno == EINTR))
+        if (n > 0)
+            sb_printf(&why, "%.*s", (int)n, buf);
+    close(fd);
+    const char *text = why.p ? why.p : "";
+    if (*text == '\n')
+        text++;
+    fprintf(stderr, "focker: %s", text);
+    sb_free(&why);
+    return 1;
 }
 
 static const char *field(const char *text, const char *key, char *out, size_t len)
