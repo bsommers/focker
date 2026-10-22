@@ -31,6 +31,7 @@ static bool linger_;
 static int fam_pty = -1; /* slot of the family's pty master in fam.stolen, or -1 */
 static int attached_cfd = -1; /* the 'focker fg' connection holding the pty, or -1 */
 static int pty_status = -1;   /* the pty job's status once reaped */
+static bool had_pty;          /* this session has had a pty as its terminal: its hangups are not requests to go */
 
 /* the cutover in flight, if any: its job, the client waiting for the reply,
  * and the transcript so far. The wait for the old parents spans loop rounds. */
@@ -221,6 +222,28 @@ static void drain(struct stolen *s)
     s->fd = s->logfd = -1;
 }
 
+/* hold the family's pty master in a free slot, draining it to the log; the
+ * caller has checked there is one */
+static void register_pty(int master, pid_t child)
+{
+    char logpath[PATH_MAX + 16];
+    snprintf(logpath, sizeof logpath, "%s/focker.log", fam.dir);
+    int logfd = open(logpath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+    if (logfd < 0)
+        logmsg("%s: %s; the terminal's output is dropped", logpath, strerror(errno));
+    fam_pty = fam.nstolen++;
+    struct stolen *s = &fam.stolen[fam_pty];
+    memset(s, 0, sizeof *s);
+    s->fd = master;
+    s->logfd = logfd;
+    s->child = child;
+    s->old_parent = getpid();
+    s->child_fd = 0;
+    s->drain = true;
+    snprintf(s->kind, sizeof s->kind, "pty");
+    snprintf(s->log, sizeof s->log, "%s", logpath);
+}
+
 /* the family's terminal: the supervisor leads its session, so the slave becomes
  * its controlling terminal and the job's; the supervisor keeps only the master */
 static int open_family_pty(int *slave)
@@ -228,28 +251,15 @@ static int open_family_pty(int *slave)
     int master;
     if (fam.nstolen == MAX_STOLEN || pty_open(&master, slave, NULL, NULL) < 0)
         return -1;
-    char logpath[PATH_MAX + 16];
-    snprintf(logpath, sizeof logpath, "%s/focker.log", fam.dir);
-    int logfd = open(logpath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
-    if (logfd < 0 || pty_take_ctty(*slave) < 0) {
+    if (pty_take_ctty(*slave) < 0) {
         int e = errno;
-        if (logfd >= 0)
-            close(logfd);
         close(master);
         close(*slave);
         errno = e;
         return -1;
     }
-    fam_pty = fam.nstolen++;
-    struct stolen *s = &fam.stolen[fam_pty];
-    memset(s, 0, sizeof *s);
-    s->fd = master;
-    s->logfd = logfd;
-    s->old_parent = getpid();
-    s->child_fd = 0;
-    s->drain = true;
-    snprintf(s->kind, sizeof s->kind, "pty");
-    snprintf(s->log, sizeof s->log, "%s", logpath);
+    had_pty = true;
+    register_pty(master, 0);
     return 0;
 }
 
@@ -322,7 +332,7 @@ static int do_attach(int cfd, struct sbuf *out)
 
 static void origin_name(char o, char *buf, size_t len)
 {
-    snprintf(buf, len, "%s", o == 'r' ? "run" : o == 'a' ? "adopted" : "orphan");
+    snprintf(buf, len, "%s", o == 'r' ? "run" : o == 'a' ? "adopted" : o == 'x' ? "external" : "orphan");
 }
 
 static int do_info(struct sbuf *out)
@@ -539,6 +549,66 @@ static int do_stop(char **args, int nargs, struct sbuf *out)
     return 0;
 }
 
+/* adopt criu=PATH pgid=P root=R... [new=1]: move the job the client checked
+ * (adopt-external) under this family. The supervisor works the job out again
+ * from /proc rather than trust the request; new=1 says the client started this
+ * family for the job, so it ends with it. */
+static int do_adopt(char **args, int nargs, struct sbuf *out)
+{
+    const char *criu = NULL;
+    pid_t pgid = 0, roots[MAX_ROOTS];
+    int nroots = 0;
+    bool fresh = false;
+    for (int i = 1; i < nargs; i++) {
+        const char *v;
+        if ((v = kv(args[i], "criu")))
+            criu = v;
+        else if ((v = kv(args[i], "pgid")))
+            pgid = (pid_t)atoi(v);
+        else if ((v = kv(args[i], "root")) && nroots < MAX_ROOTS)
+            roots[nroots++] = (pid_t)atoi(v);
+        else if ((v = kv(args[i], "new")))
+            fresh = atoi(v);
+        else {
+            sb_printf(out, "adopt: bad option '%s'\n", args[i]);
+            return 1;
+        }
+    }
+    if (!criu || pgid <= 0 || nroots == 0) {
+        sb_printf(out, "adopt: wants criu=, pgid= and root=\n");
+        return 1;
+    }
+    struct criu_job j;
+    char why[2048];
+    if (criu_job_load(roots[0], &j, why, sizeof why) < 0) {
+        sb_printf(out, "adopt: %s; nothing was changed\n", why);
+        return 1;
+    }
+    if (j.pgid != pgid || j.nroots != nroots || memcmp(j.roots, roots, (size_t)nroots * sizeof roots[0]) != 0) {
+        sb_printf(out, "adopt: the job changed since it was checked; nothing was changed\n");
+        return 1;
+    }
+    if (j.tty && (getsid(0) != getpid() || fam_pty >= 0 || fam.nstolen == MAX_STOLEN)) {
+        sb_printf(out, "family %s cannot take a terminal job (it already has one, or runs in the foreground); "
+                       "nothing was changed\n", fam.name);
+        return 1;
+    }
+    if (j.tty)
+        had_pty = true; /* a failed move closes the new pty: that hangup is not a request to go */
+    logmsg("adopting job %d", j.pgid);
+    int master;
+    int rc = adopt_run(&fam, &j, criu, &master, out);
+    pid_t lead = j.roots[0]; /* the job's status, for fg: its old group leader's */
+    for (int r = 0; r < j.nroots; r++)
+        if (j.roots[r] == j.pgid)
+            lead = j.pgid;
+    if (rc == 0 && master >= 0)
+        register_pty(master, lead);
+    if (rc == 0 && fresh)
+        linger_ = false;
+    return rc;
+}
+
 static int resolve_exec(const char *cmd, char *out, size_t len)
 {
     if (strchr(cmd, '/')) {
@@ -701,7 +771,8 @@ static void handle_client(int cfd)
     if (nargs == 0)
         sb_printf(&out, "empty request\n");
     else if (inflight.job && (strcmp(args[0], "cutover") == 0 || strcmp(args[0], "release") == 0 ||
-                              strcmp(args[0], "stop") == 0 || strcmp(args[0], "handover") == 0))
+                              strcmp(args[0], "stop") == 0 || strcmp(args[0], "handover") == 0 ||
+                              strcmp(args[0], "adopt") == 0))
         sb_printf(&out, "busy (a cutover is in progress)\n");
     else if (strcmp(args[0], "info") == 0)
         rc = do_info(&out);
@@ -719,6 +790,8 @@ static void handle_client(int cfd)
         rc = do_handover(args, nargs, cfd, &out);
     else if (strcmp(args[0], "attach") == 0)
         rc = do_attach(cfd, &out);
+    else if (strcmp(args[0], "adopt") == 0)
+        rc = do_adopt(args, nargs, &out);
     else
         sb_printf(&out, "unknown request '%s'\n", args[0]);
     if (rc < 0) { /* reply already sent and cfd closed, or deferred to finish_inflight */
@@ -872,7 +945,7 @@ int supervisor_run(const char *name, const char *dir, char **argv, bool detached
             while (read(sfd, &si, sizeof si) == sizeof si) {
                 if (si.ssi_signo == SIGCHLD)
                     continue; /* reaped at the top of the loop */
-                if (si.ssi_signo == SIGHUP && si.ssi_code == SI_KERNEL && fam_pty >= 0)
+                if (si.ssi_signo == SIGHUP && si.ssi_code == SI_KERNEL && had_pty)
                     continue; /* the family's own pty hung up (its master closed), not a request to go */
                 /* roll back first: the targets must not be left frozen when the family is told to go */
                 if (inflight.job) {

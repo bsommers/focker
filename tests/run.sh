@@ -739,6 +739,118 @@ if $criu_ok; then
     check "and no family was made" test ! -e "$FOCKER_RUNTIME_DIR/ax"
     end_job
 
+    # ---- the move ----
+    PT="python3 $ROOT/tests/mkjob.py --exec"
+    member_of() { "$F" inspect "$2" 2>/dev/null | grep -Eq "^  $1 +external"; }   # PID NAME
+    term_a() { # NAME: an interactive bash on a pty ("terminal A"); its ptyrun in TA, its input file in TAIN
+        TAIN=$FOCKER_RUNTIME_DIR/$1.in
+        : >"$TAIN"
+        "${PTYRUN[@]}" --timeout 90 -- env HISTFILE=/dev/null PS1='$ ' bash --norc -i -c \
+            "exec 3<'$TAIN'; while read -r -u 3 line || { sleep 0.1; true; }; do [ -n \"\$line\" ] && eval \"\$line\"; done" \
+            >"$FOCKER_RUNTIME_DIR/$1.out" 2>&1 & TA=$!
+    }
+    type_a() { echo "$*" >>"$TAIN"; }   # run a command line in terminal A
+    pf=$FOCKER_RUNTIME_DIR/mv1.pid
+    term_a mv1
+    type_a "set -m; $PT sh -c 'echo \$\$ >$pf; exec $B/ticker -i 200' &"
+    wait_for test -s "$pf"; T=$(cat "$pf")
+    out=$("${A[@]}" --yes mv1 "$T" 2>&1); rc=$?
+    SUP=$(sup_of mv1 2>/dev/null)
+    check "a background job moves" test $rc -eq 0
+    check "it keeps its pid and its parent is the supervisor" test -n "$SUP" -a "$(ppid_of "$T")" = "$SUP"
+    check "it is a member of the family" member_of "$T" mv1
+    check "its output goes to focker logs" wait_for grep -qs "pid=$T ppid=$SUP" "$FOCKER_RUNTIME_DIR/mv1/focker.log"
+    check "the images are gone after a move" test ! -e "$FOCKER_RUNTIME_DIR/mv1/criu/$T"
+    kill -KILL "$TA"; wait "$TA" 2>/dev/null
+    sleep 1
+    check "closing terminal A does not reach the moved job" alive "$T"
+    out=$("${PTYRUN[@]}" --timeout 5 --send '\x03@1.5' -- "$F" fg mv1 2>&1); rc=$?
+    check "fg shows the moved job" grep -q "pid=$T ppid=$SUP" <<<"$out"
+    check "Ctrl-C reaches the moved job" test $rc -eq 130
+    stop_family mv1
+
+    # a pipeline in terminal A, moved mid-stream: every line arrives exactly once
+    term_a mv2
+    cat >"$FOCKER_RUNTIME_DIR/slow.py" <<'EOF'
+import sys, time
+out = open(sys.argv[1], "w")
+for i, line in enumerate(sys.stdin):
+    out.write(line)
+    if i % 2000 == 0:
+        out.flush()
+        time.sleep(0.05)
+out.close()
+EOF
+    pf=$FOCKER_RUNTIME_DIR/mv2.pid
+    type_a "set -m; $PT seq 1 200000 | $PT sh -c 'echo \$\$ >$pf; exec python3 $FOCKER_RUNTIME_DIR/slow.py $FOCKER_RUNTIME_DIR/mv2.lines' &"
+    wait_for test -s "$pf"; T=$(cat "$pf")
+    sleep 0.5
+    out=$("${A[@]}" --yes mv2 "$T" 2>&1); rc=$?
+    check "a pipeline moves together" test $rc -eq 0 -a -n "$(grep -c '^adopt: restored' <<<"$out" | grep -x 2)"
+    for _ in $(seq 300); do alive "$T" || break; sleep 0.1; done
+    check "its pipe carries every line exactly once" \
+        test "$(sort -n "$FOCKER_RUNTIME_DIR/mv2.lines" | uniq | wc -l)" = 200000 -a "$(wc -l <"$FOCKER_RUNTIME_DIR/mv2.lines")" = 200000
+
+    # a terminal job cannot join a family that already has a terminal
+    pf=$FOCKER_RUNTIME_DIR/mv3.pid
+    type_a "$PT sh -c 'echo \$\$ >$pf; exec $B/ticker -i 200' &"
+    wait_for test -s "$pf"; T=$(cat "$pf"); TP=$(ppid_of "$T")
+    "$F" run -d -t -n jt -- sleep 30 >/dev/null
+    out=$("${A[@]}" --yes jt "$T" 2>&1); rc=$?
+    check "joining a family that has a terminal is refused" \
+        test $rc -eq 1 -a -n "$(grep 'cannot take a terminal job' <<<"$out")"
+    check "and the job stays in terminal A" test "$(ppid_of "$T")" = "$TP" -a "$(alive "$T" && echo y)" = y
+    check "and is not left stopped" bash -c "! [ \"\$(ps -o stat= -p $T | cut -c1)\" = T ]"
+    stop_family jt
+    stop_family mv2
+    kill -KILL "$TA"; wait "$TA" 2>/dev/null; kill -KILL "$T" 2>/dev/null
+
+    job nt "$B/ticker" -i 200
+    out=$("${A[@]}" --yes mvnt "${J[0]}" 2>&1); rc=$?
+    check "a job with no terminal moves" test $rc -eq 0 -a "$(ppid_of "${J[0]}")" = "$(sup_of mvnt)"
+    out=$("${PTYRUN[@]}" --timeout 3 -- "$F" fg mvnt 2>&1)
+    check "fg says the moved job has no terminal" grep -q 'mvnt has no terminal' <<<"$out"
+    stop_family mvnt; end_job
+
+    "$F" run -d -l -n fd1 -- sleep 30 >/dev/null
+    touch "$FOCKER_RUNTIME_DIR/fd1/criu"   # a file where the images dir goes: the dump cannot write
+    job fdj "$B/ticker" -i 200
+    out=$("${A[@]}" --yes fd1 "${J[0]}" 2>&1); rc=$?
+    check "a failed dump exits 1" test $rc -eq 1 -a -n "$(grep 'dump failed' <<<"$out")"
+    sleep 0.3
+    check "a failed dump resumes the job where it was" untouched
+    check "and does not leave it stopped" bash -c "! [ \"\$(ps -o stat= -p ${J[0]} | cut -c1)\" = T ]"
+    end_job; stop_family fd1
+
+    # shellcheck disable=SC2016 # the wrapper's own $1 and $@
+    printf '#!/bin/sh\n[ "$1" = restore ] && exit 1\nexec %s "$@"\n' "$CRIU" >"$FOCKER_RUNTIME_DIR/criu-norestore"
+    chmod +x "$FOCKER_RUNTIME_DIR/criu-norestore"
+    job frj "$B/ticker" -i 200
+    out=$(FOCKER_CRIU=$FOCKER_RUNTIME_DIR/criu-norestore "${A[@]}" --yes fr "${J[0]}" 2>&1); rc=$?
+    check "a failed restore exits 1" test $rc -eq 1
+    check "and prints a retry line" grep -q 'retry with: .*criu-norestore restore' <<<"$out"
+    check "and keeps the images" test -s "$FOCKER_RUNTIME_DIR/fr/criu/${J[0]}/inventory.img"
+    end_job; stop_family fr
+
+    job vc "$B/ticker" -i 200
+    "${A[@]}" --yes vc "${J[0]}" >/dev/null 2>&1 & ac=$!
+    wait_for grep -qs 'adopt: stopped' "$FOCKER_RUNTIME_DIR/vc/focker.log"
+    kill -KILL "$ac"; wait "$ac" 2>/dev/null
+    check "a vanished adopt client does not strand the job" \
+        bash -c "for _ in \$(seq 100); do [ \"\$(ps -o ppid= -p ${J[0]} | tr -d ' ')\" = \"\$(cat '$FOCKER_RUNTIME_DIR/vc/pid')\" ] && ! [ \"\$(ps -o stat= -p ${J[0]} | cut -c1)\" = T ] && exit 0; sleep 0.1; done; exit 1"
+    stop_family vc; end_job
+
+    async_fam abusy
+    "$F" cutover --wait -t 5 abusy "$T2" >/dev/null 2>&1 & cpid=$!
+    wait_for frozen_by "$T2" "$SUP"
+    job bj "$B/ticker" -i 200
+    out=$("${A[@]}" --yes abusy "${J[0]}" 2>&1); rc=$?
+    check "adopt is refused with busy during a cutover" test $rc -eq 1 -a -n "$(grep 'busy (a cutover is in progress)' <<<"$out")"
+    check "and the job is left alone" untouched
+    end_job
+    kill "$P2"; wait "$cpid"
+    stop_family abusy
+
     if [ "$yama" != 0 ]; then
         job --no-ptracer yama sleep 30
         out=$("${A[@]}" --yes ax "${J[0]}" 2>&1); rc=$?

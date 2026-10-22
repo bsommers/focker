@@ -3,6 +3,7 @@
 in one new process group, this launcher staying their parent like a shell.
 
 usage: mkjob.py [--no-ptracer] [--leak] PIDFILE CMD [ARG...] ['|' CMD [ARG...]]...
+       mkjob.py --exec CMD [ARG...]   (allow ptrace, then become CMD: for jobs a shell starts)
 
 Each stage allows any process to ptrace it (PR_SET_PTRACER_ANY), as criu needs
 under Yama ptrace_scope 1, unless --no-ptracer. The last stage's output goes to
@@ -19,6 +20,9 @@ PR_SET_PTRACER_ANY = ctypes.c_ulong(-1)
 
 def main():
     args = sys.argv[1:]
+    if args and args[0] == "--exec":
+        ctypes.CDLL(None).prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY, 0, 0, 0)
+        os.execvp(args[1], args[1:])
     ptracer, leak = True, False
     while args and args[0].startswith("--"):
         if args[0] == "--no-ptracer":

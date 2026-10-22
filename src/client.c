@@ -38,6 +38,59 @@ static int connect_family(const char *name)
     return fd;
 }
 
+/* start a detached supervisor for NAME (its state dir already made) and wait
+ * until it is ready; on failure print why and free the name */
+int start_detached(const char *name, const char *dir, char **cmd, bool linger, bool tty)
+{
+    int ready[2];
+    if (pipe2(ready, O_CLOEXEC) < 0) {
+        fprintf(stderr, "focker: pipe: %s\n", strerror(errno));
+        return FK_FAIL;
+    }
+    fflush(NULL);
+    pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "focker: fork: %s\n", strerror(errno));
+        close(ready[0]);
+        close(ready[1]);
+        return FK_FAIL;
+    }
+    if (pid == 0) {
+        close(ready[0]);
+        setsid();
+        char logpath[PATH_MAX + 16];
+        snprintf(logpath, sizeof logpath, "%s/focker.log", dir);
+        int log = open(logpath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+        int null = open("/dev/null", O_RDONLY | O_CLOEXEC);
+        if (log < 0 || null < 0)
+            _exit(FK_FAIL);
+        dup2(null, 0);
+        dup2(log, 1);
+        dup2(log, 2);
+        setvbuf(stdout, NULL, _IOLBF, 0);
+        _exit(supervisor_run(name, dir, cmd, true, linger, tty, ready[1]));
+    }
+    close(ready[1]);
+    char b;
+    ssize_t n;
+    while ((n = read(ready[0], &b, 1)) < 0 && errno == EINTR)
+        ;
+    close(ready[0]);
+    if (n != 1) {
+        char logpath[PATH_MAX + 16], line[512] = "";
+        snprintf(logpath, sizeof logpath, "%s/focker.log", dir);
+        FILE *f = fopen(logpath, "re");
+        while (f && fgets(line, sizeof line, f))
+            ;
+        if (f)
+            fclose(f);
+        fprintf(stderr, "focker: family '%s' failed to start%s%s", name, line[0] ? ": " : "\n", line);
+        cmd_rm(name, true);
+        return FK_FAIL;
+    }
+    return FK_OK;
+}
+
 int client_request(const char *name, char **args, int nargs, struct sbuf *reply)
 {
     int fd = connect_family(name);
@@ -290,6 +343,8 @@ static void tree_print(const struct procent *ps, int n, pid_t pid, const char *p
                 snprintf(note, sizeof note, "  (adopted from %d)", ms[j].old_ppid);
             else if (ms[j].origin == 'o')
                 snprintf(note, sizeof note, "  (orphan, adopted)");
+            else if (ms[j].origin == 'x')
+                snprintf(note, sizeof note, "  (moved from another terminal, was under %d)", ms[j].old_ppid);
         }
         printf("%s%s%d %s%s\n", prefix, last ? "└─ " : "├─ ", ps[i].pid, cmd, note);
         char next[512];

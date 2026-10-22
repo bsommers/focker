@@ -21,8 +21,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define CRIU_TIMEOUT_MS 60000
-
 /* ---- job discovery --------------------------------------------------------- */
 
 static int cmp_pid(const void *a, const void *b)
@@ -83,7 +81,7 @@ static void say(char *why, size_t len, const char *fmt, ...)
 }
 
 /* pipes the job's processes hold: which roots' subtrees hold each one */
-struct pipe_use { unsigned long ino; unsigned roots; pid_t holder; };
+struct pipe_use { unsigned long ino; unsigned roots, rd, wr; pid_t holder; };
 
 static int collect_pipes(const struct criu_job *j, const pid_t *root_of, struct pipe_use *pu, int max)
 {
@@ -106,6 +104,10 @@ static int collect_pipes(const struct criu_job *j, const pid_t *root_of, struct 
                 pu[np++] = (struct pipe_use){ .ino = fds[f].ino, .holder = j->members[m] };
             }
             pu[k].roots |= 1u << r;
+            if (fds[f].accmode == O_RDONLY)
+                pu[k].rd |= 1u << r;
+            else
+                pu[k].wr |= 1u << r;
         }
     }
     return np;
@@ -189,6 +191,13 @@ int criu_job_load(pid_t pid, struct criu_job *j, char *why, size_t len)
             say(why, len, "%d's job has more than %d pipes between its processes", pid, MAX_ROOTS);
             goto out;
         }
+        if (pu[k].rd & pu[k].wr) { /* each root's restore gets one end of the new pipe, not both */
+            say(why, len, "%d's pipe:[%lu] is held at both ends by one part of the job and read or written by another",
+                pu[k].holder, pu[k].ino);
+            goto out;
+        }
+        j->pipe_rd[j->npipes] = pu[k].rd;
+        j->pipe_wr[j->npipes] = pu[k].wr;
         j->pipes[j->npipes++] = pu[k].ino;
     }
     /* a pipe that leads out of the job would be cut by the move: criu does not refuse it, so focker does */
@@ -370,14 +379,14 @@ static int rm_entry(const char *path, const struct stat *st, int flag, struct FT
     return remove(path);
 }
 
-static void rm_tree(const char *dir)
+void rm_tree(const char *dir)
 {
     nftw(dir, rm_entry, 16, FTW_DEPTH | FTW_PHYS);
 }
 
 /* why criu failed, from its log: the ptrace refusal first (it is only a
  * warning), else the first error without its "Error (file:line): " prefix */
-static void dump_failure(const char *log, pid_t root, char *why, size_t len)
+void criu_log_error(const char *log, pid_t root, char *why, size_t len)
 {
     char text[65536] = "";
     FILE *f = fopen(log, "re");
@@ -416,7 +425,7 @@ static void dump_failure(const char *log, pid_t root, char *why, size_t len)
         }
         line = nl ? nl + 1 : NULL;
     }
-    say(why, len, "criu dump failed (no error in its log)");
+    say(why, len, "criu failed (no error in its log)");
 }
 
 static int trial_dump(const char *criu, const struct criu_job *j, char *why, size_t len)
@@ -449,7 +458,7 @@ static int trial_dump(const char *criu, const struct criu_job *j, char *why, siz
         }
         int st = run_capture(argv, NULL, 0, CRIU_TIMEOUT_MS);
         if (st < 0 || !WIFEXITED(st) || WEXITSTATUS(st) != 0) {
-            dump_failure(log, j->roots[r], why, len);
+            criu_log_error(log, j->roots[r], why, len);
             rc = -1;
         }
     }
@@ -590,6 +599,115 @@ int cmd_adopt_external(const char *name, pid_t pid, bool yes, bool dry_run)
             return FK_FAIL;
         }
     }
-    fprintf(stderr, "focker: moving the job is not implemented yet; nothing was changed\n");
-    return FK_FAIL;
+
+    /* the move happens in the family's supervisor, so the job ends up its child */
+    bool made = false;
+    if (!existing) {
+        if (mkdir(dir, 0700) < 0) {
+            fprintf(stderr, "focker: %s: %s\n", dir, strerror(errno));
+            return FK_FAIL;
+        }
+        if (start_detached(name, dir, NULL, true, false) != FK_OK)
+            return FK_FAIL;
+        made = true;
+    }
+    static char tok[4 + MAX_ROOTS][PATH_MAX + 16];
+    char *args[4 + MAX_ROOTS];
+    int n = 0;
+    args[n++] = "adopt";
+    snprintf(tok[n], sizeof tok[n], "criu=%s", criu), args[n] = tok[n], n++;
+    snprintf(tok[n], sizeof tok[n], "pgid=%d", j.pgid), args[n] = tok[n], n++;
+    if (made)
+        args[n++] = "new=1";
+    for (int r = 0; r < j.nroots; r++)
+        snprintf(tok[n], sizeof tok[n], "root=%d", j.roots[r]), args[n] = tok[n], n++;
+    struct sbuf reply = { 0 };
+    int rc = client_request(name, args, n, &reply);
+    if (rc < 0)
+        fprintf(stderr, "focker: lost family '%s' during the move (%s); see 'focker logs %s'\n", name,
+                strerror(errno), name);
+    else
+        fprintf(rc == 0 ? stdout : stderr, "%.*s", (int)reply.len, reply.p ? reply.p : "");
+    bool touched = reply.p && strstr(reply.p, "point of no return");
+    sb_free(&reply);
+    if (rc != 0 && made && !touched) { /* nothing moved: the family made for the job goes too */
+        char *stop[] = { "stop" };
+        struct sbuf r = { 0 };
+        client_request(name, stop, 1, &r);
+        sb_free(&r);
+        char sock[PATH_MAX + 16];
+        snprintf(sock, sizeof sock, "%s/control.sock", dir);
+        for (int i = 0; i < 100 && access(sock, F_OK) == 0; i++)
+            sleep_ms(30);
+        cmd_rm(name, true);
+    }
+    return rc == 0 ? FK_OK : FK_FAIL;
+}
+
+/* ---- pipes-data.img -------------------------------------------------------- */
+
+static bool varint(const unsigned char **p, const unsigned char *end, unsigned long *v)
+{
+    *v = 0;
+    for (int shift = 0; *p < end && shift < 64; shift += 7) {
+        unsigned char b = *(*p)++;
+        *v |= (unsigned long)(b & 0x7f) << shift;
+        if (!(b & 0x80))
+            return true;
+    }
+    return false;
+}
+
+int criu_pipe_data(const unsigned char *img, size_t len, unsigned long ino, size_t *off, size_t *n,
+                   unsigned long *size)
+{
+    size_t at = 8; /* the image's magic */
+    while (at < len) {
+        if (len - at < 4)
+            return -1;
+        size_t elen = (size_t)img[at] | (size_t)img[at + 1] << 8 | (size_t)img[at + 2] << 16 |
+                      (size_t)img[at + 3] << 24;
+        at += 4;
+        if (elen > len - at)
+            return -1;
+        const unsigned char *p = img + at, *end = p + elen;
+        unsigned long id = 0, bytes = 0, sz = 0;
+        while (p < end) {
+            unsigned long tag, v;
+            if (!varint(&p, end, &tag))
+                return -1;
+            if ((tag & 7) == 0) {
+                if (!varint(&p, end, &v))
+                    return -1;
+                if (tag >> 3 == 1)
+                    id = v;
+                else if (tag >> 3 == 2)
+                    bytes = v;
+                else if (tag >> 3 == 3)
+                    sz = v;
+            } else if ((tag & 7) == 2) {
+                if (!varint(&p, end, &v) || v > (unsigned long)(end - p))
+                    return -1;
+                p += v;
+            } else if ((tag & 7) == 1 || (tag & 7) == 5) {
+                size_t skip = (tag & 7) == 1 ? 8 : 4;
+                if ((size_t)(end - p) < skip)
+                    return -1;
+                p += skip;
+            } else {
+                return -1;
+            }
+        }
+        at += elen;
+        if (bytes > len - at)
+            return -1;
+        if (id == ino) {
+            *off = at;
+            *n = bytes;
+            *size = sz;
+            return 1;
+        }
+        at += bytes;
+    }
+    return 0;
 }

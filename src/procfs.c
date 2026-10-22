@@ -357,6 +357,11 @@ int proc_tty_nr(pid_t pid)
     return (int)stat_field(pid, 7);
 }
 
+pid_t proc_tpgid(pid_t pid)
+{
+    return (pid_t)stat_field(pid, 8);
+}
+
 uid_t proc_uid(pid_t pid)
 {
     char path[PATH_MAX], v[64];

@@ -60,6 +60,9 @@ def main():
             os.dup2(slave, fd)
         if slave > 2:
             os.close(slave)
+        # like a terminal emulator: a test script's '&' left these ignored
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGQUIT, signal.SIG_DFL)
         try:
             os.execvp(a.cmd[0], a.cmd)
         except OSError as e:

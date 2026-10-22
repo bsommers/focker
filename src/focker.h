@@ -62,6 +62,7 @@ uint64_t proc_sigpending(pid_t pid);                  /* shared + every thread's
 pid_t    proc_pgid(pid_t pid);                        /* -1 if gone */
 pid_t    proc_sid(pid_t pid);                         /* -1 if gone */
 int      proc_tty_nr(pid_t pid);                      /* /proc/PID/stat field 7: 0 none, -1 gone */
+pid_t    proc_tpgid(pid_t pid);                       /* its terminal's foreground group: -1 none or gone */
 uid_t    proc_uid(pid_t pid);                         /* real uid, (uid_t)-1 if gone */
 
 /* unixdiag.c */
@@ -77,7 +78,8 @@ bool          inet_is_loopback(int family, const void *addr);
 /* family state, owned by supervisor.c */
 struct member {
     pid_t pid, old_ppid;
-    char  origin;       /* 'r' started by run, 'a' adopted by cutover, 'o' orphan the kernel handed us */
+    char  origin;       /* 'r' started by run, 'a' adopted by cutover, 'o' orphan the kernel handed us,
+                           'x' moved from another terminal by adopt-external */
     bool  alive;
     int   status;
     char  cmd[160];
@@ -136,6 +138,9 @@ int pty_take_ctty(int slave);                         /* TIOCSCTTY for the calli
 int supervisor_run(const char *name, const char *dir, char **argv, bool detached, bool linger, bool tty,
                    int ready_fd);
 
+/* client.c: start a detached supervisor for NAME, its state dir made; FK_OK once it is ready */
+int start_detached(const char *name, const char *dir, char **cmd, bool linger, bool tty);
+
 /* client.c */
 int client_request(const char *name, char **args, int nargs, struct sbuf *reply); /* 0 ok, 1 err, -1 unreachable */
 int client_attach(const char *name, int *master, int *conn); /* 0, 1 (err printed), -1 unreachable */
@@ -157,8 +162,10 @@ struct criu_job {
     bool  tty;
     int   tty_nr;               /* the job's terminal, as /proc/PID/stat encodes it */
     unsigned long pipes[MAX_ROOTS]; /* inodes of pipes joining two roots */
+    unsigned pipe_rd[MAX_ROOTS], pipe_wr[MAX_ROOTS]; /* per pipe: bit r set if roots[r] holds its read/write end */
     int   npipes;
 };
+#define CRIU_TIMEOUT_MS 60000                         /* per criu invocation */
 int job_roots(const struct procent *ps, int n, const pid_t *pgids, pid_t pgid, pid_t *roots, int max); /* -1 if > max */
 int criu_find(char *path, size_t len);                /* $FOCKER_CRIU, else criu on PATH */
 int criu_capable(const char *criu, char *why, size_t len); /* 1 capable, 0 not (why says so) */
@@ -171,6 +178,19 @@ int criu_dump_argv(const char *criu, const struct criu_job *j, pid_t root, const
 int criu_restore_argv(const char *criu, const struct criu_job *j, const char *dir, const int *pipe_fds, char **argv,
                       int max);
 int cmd_adopt_external(const char *name, pid_t pid, bool yes, bool dry_run);
+void criu_log_error(const char *log, pid_t root, char *why, size_t len); /* why criu failed, from its log */
+void rm_tree(const char *dir);
+/* the buffered data of pipe ino in a pipes-data.img held in img[0..len): 1 found (img[*off..+*n), the pipe's
+ * size in *size), 0 not there, -1 malformed */
+int criu_pipe_data(const unsigned char *img, size_t len, unsigned long ino, size_t *off, size_t *n,
+                   unsigned long *size);
+
+/* adopt.c: the supervisor side of adopt-external. Stops, dumps, kills and
+ * restores the job as children of the calling supervisor, which must lead its
+ * own session when the job has a terminal. 0 moved (*master: the job's new pty
+ * master, or -1), 1 not (the transcript in out says whether it was still
+ * running where it was, or the point of no return was passed). */
+int adopt_run(struct family *f, const struct criu_job *j, const char *criu, int *master, struct sbuf *out);
 
 /* attach.c */
 int cmd_fg(const char *name);

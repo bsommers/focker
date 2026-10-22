@@ -448,6 +448,25 @@ static void join(char **argv, int argc, char *out, size_t len)
         snprintf(out + strlen(out), len - strlen(out), "%s%s", i ? " " : "", argv[i]);
 }
 
+/* pipes-data.img: magic, then (u32 LE length, PipeDataEntry, raw bytes) per pipe */
+static void test_pipe_data(void)
+{
+    static const unsigned char img[] = {
+        1, 2, 3, 4, 5, 6, 7, 8,                                           /* magic */
+        7, 0, 0, 0, 0x08, 77, 0x10, 3, 0x18, 0x80, 0x20, 'a', 'b', 'c',   /* pipe 77: 3 bytes, size 4096 */
+        9, 0, 0, 0, 0x08, 0xac, 0x02, 0x10, 2, 0x18, 0x80, 0x80, 0x04, 'x', 'y', /* pipe 300: 2 bytes, 65536 */
+    };
+    size_t off, n;
+    unsigned long size;
+    CHECK("pipe data: first entry", criu_pipe_data(img, sizeof img, 77, &off, &n, &size) == 1 && n == 3 &&
+                                        size == 4096 && memcmp(img + off, "abc", 3) == 0);
+    CHECK("pipe data: second entry", criu_pipe_data(img, sizeof img, 300, &off, &n, &size) == 1 && n == 2 &&
+                                         size == 65536 && memcmp(img + off, "xy", 2) == 0);
+    CHECK("pipe data: absent pipe", criu_pipe_data(img, sizeof img, 5, &off, &n, &size) == 0);
+    CHECK("pipe data: truncated bytes", criu_pipe_data(img, sizeof img - 1, 300, &off, &n, &size) == -1);
+    CHECK("pipe data: truncated entry", criu_pipe_data(img, 14, 300, &off, &n, &size) == -1);
+}
+
 static void test_criu_argv(void)
 {
     puts("criu argv");
@@ -486,6 +505,7 @@ static void test_stat_fields(void)
     CHECK("pgid", proc_pgid(300) == 290);
     CHECK("sid", proc_sid(300) == 280);
     CHECK("tty_nr", proc_tty_nr(300) == 34817);
+    CHECK("tpgid", proc_tpgid(300) == 290);
     CHECK("uid", proc_uid(300) == 1000);
     CHECK("a missing pid", proc_pgid(999) == -1 && proc_tty_nr(999) < 0 && proc_uid(999) == (uid_t)-1);
 }
@@ -507,6 +527,7 @@ int main(void)
     test_stat_fields();
     test_job_roots();
     test_criu_argv();
+    test_pipe_data();
     char cmd[PATH_MAX + 16];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", root);
     if (system(cmd) != 0)
