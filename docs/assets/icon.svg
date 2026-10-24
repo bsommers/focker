@@ -1,0 +1,398 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="10 -10 600 600"
+   role="img"
+   aria-labelledby="t d"
+   version="1.1"
+   id="svg37"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs37" />
+  <title
+     id="t">focker icon</title>
+  <desc
+     id="d">A fat tabby cat paddling in the sea with a stack of shipping containers on its back. Each container has a nervous little process inside. Tagline: docker, but you have to meet the family.</desc>
+  <rect
+     x="10"
+     y="-10"
+     width="600"
+     height="600"
+     rx="110"
+     fill="#eaf2ff"
+     id="rect1" />
+  <clipPath
+     id="tile">
+    <rect
+       x="10"
+       y="-10"
+       width="600"
+       height="600"
+       rx="110"
+       id="rect2" />
+  </clipPath>
+  <g
+     clip-path="url(#tile)"
+     id="g37">
+    <!-- sea -->
+    <path
+       d="M0 330 q30 -22 60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 V620 H0Z"
+       fill="#1d63ed"
+       opacity=".18"
+       id="path2" />
+    <path
+       d="M0 350 q30 -22 60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 V620 H0Z"
+       fill="#1d63ed"
+       opacity=".28"
+       id="path3" />
+    <!-- tail -->
+    <path
+       d="M110 255 C60 245 40 190 70 160"
+       fill="none"
+       stroke="#e8933a"
+       stroke-width="22"
+       stroke-linecap="round"
+       id="path4" />
+    <path
+       d="M62 190 l16 3 M58 208 l16 3"
+       stroke="#a85a14"
+       stroke-width="5"
+       stroke-linecap="round"
+       id="path5" />
+    <!-- containers (the stack on the cat's back) -->
+    <g
+       stroke="#0b2a66"
+       stroke-width="5"
+       stroke-linejoin="round"
+       id="g7">
+      <rect
+         x="125"
+         y="190"
+         width="120"
+         height="62"
+         rx="5"
+         fill="#1d63ed"
+         id="rect5" />
+      <rect
+         x="250"
+         y="190"
+         width="120"
+         height="62"
+         rx="5"
+         fill="#2bb3a3"
+         id="rect6" />
+      <rect
+         x="188"
+         y="128"
+         width="120"
+         height="62"
+         rx="5"
+         fill="#f4b400"
+         id="rect7" />
+    </g>
+    <!-- container ribs -->
+    <g
+       stroke="#0b2a66"
+       stroke-width="3"
+       opacity=".45"
+       id="g9">
+      <path
+         d="M147 196v50M167 196v50M187 196v50M207 196v50M227 196v50"
+         id="path7" />
+      <path
+         d="M272 196v50M292 196v50M312 196v50M332 196v50M352 196v50"
+         id="path8" />
+      <path
+         d="M210 134v50M230 134v50M250 134v50M270 134v50M290 134v50"
+         id="path9" />
+    </g>
+    <!-- windows with nervous processes -->
+    <g
+       stroke="#0b2a66"
+       stroke-width="4"
+       id="g11">
+      <rect
+         x="152"
+         y="205"
+         width="66"
+         height="32"
+         rx="4"
+         fill="#fff"
+         id="rect9" />
+      <rect
+         x="277"
+         y="205"
+         width="66"
+         height="32"
+         rx="4"
+         fill="#fff"
+         id="rect10" />
+      <rect
+         x="215"
+         y="143"
+         width="66"
+         height="32"
+         rx="4"
+         fill="#fff"
+         id="rect11" />
+    </g>
+    <g
+       fill="#0b2a66"
+       id="g16">
+      <!-- bottom-left: wide-eyed -->
+      <circle
+         cx="175"
+         cy="219"
+         r="4.5"
+         id="circle11" />
+      <circle
+         cx="196"
+         cy="219"
+         r="4.5"
+         id="circle12" />
+      <!-- bottom-right: side-eye -->
+      <circle
+         cx="300"
+         cy="219"
+         r="4.5"
+         id="circle13" />
+      <circle
+         cx="321"
+         cy="219"
+         r="4.5"
+         id="circle14" />
+      <!-- top: screaming -->
+      <circle
+         cx="238"
+         cy="156"
+         r="4.5"
+         id="circle15" />
+      <circle
+         cx="259"
+         cy="156"
+         r="4.5"
+         id="circle16" />
+    </g>
+    <g
+       fill="none"
+       stroke="#0b2a66"
+       stroke-width="3"
+       stroke-linecap="round"
+       id="g17">
+      <path
+         d="M176 230 q10 -6 20 0"
+         id="path16" />
+      <path
+         d="M302 230 h18"
+         id="path17" />
+    </g>
+    <ellipse
+       cx="248"
+       cy="167"
+       rx="6"
+       ry="5"
+       fill="#0b2a66"
+       id="ellipse17" />
+    <!-- sweat drops -->
+    <path
+       d="M205 208 q-4 7 0 9 q4 -2 0 -9z"
+       fill="#5ec8ff"
+       id="path18" />
+    <path
+       d="M271 146 q-4 7 0 9 q4 -2 0 -9z"
+       fill="#5ec8ff"
+       id="path19" />
+    <!-- PID 1 flag -->
+    <path
+       d="M248 128 V84"
+       stroke="#0b2a66"
+       stroke-width="5"
+       stroke-linecap="round"
+       id="path20" />
+    <path
+       d="M250 86 h74 l-10 14 l10 14 h-74z"
+       fill="#e5484d"
+       stroke="#0b2a66"
+       stroke-width="4"
+       stroke-linejoin="round"
+       id="path21" />
+    <path
+       d="m 260.34717,96.881348 v 3.208012 h 0.88623 q 1.06201,0 1.48681,-0.358891 0.43213,-0.358887 0.43213,-1.245117 0,-0.886231 -0.43213,-1.245118 -0.4248,-0.358886 -1.48681,-0.358886 z m -2.16065,-1.816407 h 2.96631 q 2.26319,0 3.25196,0.805664 0.99609,0.805665 0.99609,2.614747 0,1.809078 -0.99609,2.614748 -0.98877,0.80566 -3.25196,0.80566 h -0.80566 V 106 h -2.16065 z m 9.10401,1.904297 v -1.904297 h 6.51123 v 1.904297 h -2.1753 v 7.126462 h 2.1753 V 106 h -6.51123 v -1.9043 h 2.17529 v -7.126462 z m 10.93506,0.04395 v 7.038576 h 0.58593 q 1.27442,0 1.81641,-0.79834 0.54199,-0.80567 0.54199,-2.73194 0,-1.911617 -0.54199,-2.709957 -0.54199,-0.798339 -1.81641,-0.798339 z m -2.16065,-1.948243 h 2.31445 q 2.68067,0 3.85987,1.281739 1.1792,1.274414 1.1792,4.1748 0,2.90772 -1.1792,4.19678 Q 281.06006,106 278.37939,106 h -2.31445 z M 294.5,104.0957 h 2.41699 v -7.097165 l -2.24853,0.556641 v -1.948242 l 2.26318,-0.541993 h 2.0874 v 9.030759 h 2.417 V 106 H 294.5 Z"
+       id="text21"
+       style="font-weight:800;font-size:15px;font-family:'DejaVu Sans Mono', monospace;fill:#ffffff"
+       aria-label="PID 1" />
+    <!-- cat body -->
+    <ellipse
+       cx="270"
+       cy="290"
+       rx="165"
+       ry="62"
+       fill="#f2a24a"
+       stroke="#0b2a66"
+       stroke-width="6"
+       id="ellipse21" />
+    <g
+       stroke="#a85a14"
+       stroke-width="6"
+       stroke-linecap="round"
+       fill="none"
+       id="g24">
+      <path
+         d="M165 258 q8 14 0 28"
+         id="path22" />
+      <path
+         d="M200 252 q8 16 0 32"
+         id="path23" />
+      <path
+         d="M236 250 q8 16 0 32"
+         id="path24" />
+    </g>
+    <!-- belly -->
+    <ellipse
+       cx="280"
+       cy="318"
+       rx="95"
+       ry="26"
+       fill="#fff4e0"
+       opacity=".9"
+       id="ellipse24" />
+    <!-- paddling paws -->
+    <ellipse
+       cx="190"
+       cy="345"
+       rx="26"
+       ry="14"
+       fill="#fff4e0"
+       stroke="#0b2a66"
+       stroke-width="5"
+       id="ellipse25" />
+    <ellipse
+       cx="330"
+       cy="348"
+       rx="26"
+       ry="14"
+       fill="#fff4e0"
+       stroke="#0b2a66"
+       stroke-width="5"
+       id="ellipse26" />
+    <!-- head (right side, facing the viewer's right) -->
+    <g
+       stroke="#0b2a66"
+       stroke-width="6"
+       stroke-linejoin="round"
+       id="g27">
+      <path
+         d="M395 232 l8 -50 l36 24z"
+         fill="#f2a24a"
+         id="path26" />
+      <path
+         d="M470 206 l34 -26 l8 50z"
+         fill="#f2a24a"
+         id="path27" />
+      <ellipse
+         cx="452"
+         cy="270"
+         rx="78"
+         ry="64"
+         fill="#f2a24a"
+         id="ellipse27" />
+    </g>
+    <path
+       d="M406 214 l5 -22 l17 11z M490 205 l17 -11 l5 22z"
+       fill="#ffb5b5"
+       id="path28" />
+    <!-- head stripes -->
+    <g
+       stroke="#a85a14"
+       stroke-width="6"
+       stroke-linecap="round"
+       id="g29">
+      <path
+         d="M452 212 v18 M432 216 l4 14 M472 216 l-4 14"
+         id="path29" />
+    </g>
+    <!-- eyes: deeply unimpressed -->
+    <ellipse
+       cx="425"
+       cy="262"
+       rx="15"
+       ry="17"
+       fill="#fff"
+       stroke="#0b2a66"
+       stroke-width="4"
+       id="ellipse29" />
+    <ellipse
+       cx="480"
+       cy="262"
+       rx="15"
+       ry="17"
+       fill="#fff"
+       stroke="#0b2a66"
+       stroke-width="4"
+       id="ellipse30" />
+    <circle
+       cx="433"
+       cy="264"
+       r="7"
+       fill="#0b2a66"
+       id="circle30" />
+    <circle
+       cx="488"
+       cy="264"
+       r="7"
+       fill="#0b2a66"
+       id="circle31" />
+    <path
+       d="M407 248 h36 M462 248 h36"
+       stroke="#0b2a66"
+       stroke-width="6"
+       stroke-linecap="round"
+       id="path31" />
+    <!-- nose, mouth, whiskers -->
+    <path
+       d="M444 284 h16 l-8 9z"
+       fill="#e5484d"
+       stroke="#0b2a66"
+       stroke-width="3"
+       stroke-linejoin="round"
+       id="path32" />
+    <path
+       d="M452 293 q-9 12 -20 6 M452 293 q9 12 20 6"
+       fill="none"
+       stroke="#0b2a66"
+       stroke-width="4"
+       stroke-linecap="round"
+       id="path33" />
+    <g
+       stroke="#0b2a66"
+       stroke-width="3"
+       stroke-linecap="round"
+       id="g34">
+      <path
+         d="M410 286 l-34 -6 M410 296 l-36 6 M494 286 l34 -6 M494 296 l36 6"
+         id="path34" />
+    </g>
+    <!-- tiny captain's hat -->
+    <path
+       d="M410 196 q42 -34 84 0 q-42 12 -84 0z"
+       fill="#fff"
+       stroke="#0b2a66"
+       stroke-width="5"
+       stroke-linejoin="round"
+       id="path35" />
+    <path
+       d="M430 188 q22 -10 44 0"
+       fill="none"
+       stroke="#1d63ed"
+       stroke-width="5"
+       stroke-linecap="round"
+       id="path36" />
+    <!-- wordmark -->
+    <!-- foam on the waves in front -->
+    <path
+       d="M0 392 q30 -22 60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 V620 H0Z"
+       fill="#1d63ed"
+       opacity=".4"
+       id="path37" />
+  </g>
+</svg>

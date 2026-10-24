@@ -1,3 +1,5 @@
+<img src="assets/icon-64.png" alt="focker" width="48" align="right">
+
 # focker use cases
 
 focker started as a crazy idea: give a running process a new parent. In day-to-day operations it boils down

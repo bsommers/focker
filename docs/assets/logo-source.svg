@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 460" role="img" aria-labelledby="t d">
+  <title id="t">focker</title>
+  <desc id="d">A fat tabby cat paddling in the sea with a stack of shipping containers on its back. Each container has a nervous little process inside. Tagline: docker, but you have to meet the family.</desc>
+
+  <!-- sea -->
+  <path d="M0 330 q30 -22 60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 V460 H0Z" fill="#1d63ed" opacity=".18"/>
+  <path d="M0 350 q30 -22 60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 V460 H0Z" fill="#1d63ed" opacity=".28"/>
+
+  <!-- tail -->
+  <path d="M110 255 C60 245 40 190 70 160" fill="none" stroke="#e8933a" stroke-width="22" stroke-linecap="round"/>
+  <path d="M62 190 l16 3 M58 208 l16 3" stroke="#a85a14" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- containers (the stack on the cat's back) -->
+  <g stroke="#0b2a66" stroke-width="5" stroke-linejoin="round">
+    <rect x="125" y="190" width="120" height="62" rx="5" fill="#1d63ed"/>
+    <rect x="250" y="190" width="120" height="62" rx="5" fill="#2bb3a3"/>
+    <rect x="188" y="128" width="120" height="62" rx="5" fill="#f4b400"/>
+  </g>
+  <!-- container ribs -->
+  <g stroke="#0b2a66" stroke-width="3" opacity=".45">
+    <path d="M147 196v50M167 196v50M187 196v50M207 196v50M227 196v50"/>
+    <path d="M272 196v50M292 196v50M312 196v50M332 196v50M352 196v50"/>
+    <path d="M210 134v50M230 134v50M250 134v50M270 134v50M290 134v50"/>
+  </g>
+  <!-- windows with nervous processes -->
+  <g stroke="#0b2a66" stroke-width="4">
+    <rect x="152" y="205" width="66" height="32" rx="4" fill="#fff"/>
+    <rect x="277" y="205" width="66" height="32" rx="4" fill="#fff"/>
+    <rect x="215" y="143" width="66" height="32" rx="4" fill="#fff"/>
+  </g>
+  <g fill="#0b2a66">
+    <!-- bottom-left: wide-eyed -->
+    <circle cx="175" cy="219" r="4.5"/><circle cx="196" cy="219" r="4.5"/>
+    <!-- bottom-right: side-eye -->
+    <circle cx="300" cy="219" r="4.5"/><circle cx="321" cy="219" r="4.5"/>
+    <!-- top: screaming -->
+    <circle cx="238" cy="156" r="4.5"/><circle cx="259" cy="156" r="4.5"/>
+  </g>
+  <g fill="none" stroke="#0b2a66" stroke-width="3" stroke-linecap="round">
+    <path d="M176 230 q10 -6 20 0"/>
+    <path d="M302 230 h18"/>
+  </g>
+  <ellipse cx="248" cy="167" rx="6" ry="5" fill="#0b2a66"/>
+  <!-- sweat drops -->
+  <path d="M205 208 q-4 7 0 9 q4 -2 0 -9z" fill="#5ec8ff"/>
+  <path d="M271 146 q-4 7 0 9 q4 -2 0 -9z" fill="#5ec8ff"/>
+
+  <!-- PID 1 flag -->
+  <path d="M248 128 V84" stroke="#0b2a66" stroke-width="5" stroke-linecap="round"/>
+  <path d="M250 86 h74 l-10 14 l10 14 h-74z" fill="#e5484d" stroke="#0b2a66" stroke-width="4" stroke-linejoin="round"/>
+  <text x="257" y="106" font-family="'DejaVu Sans Mono',monospace" font-size="15" font-weight="800" fill="#fff">PID 1</text>
+
+  <!-- speech bubble -->
+  <g>
+    <path d="M350 60 h150 a10 10 0 0 1 10 10 v36 a10 10 0 0 1 -10 10 h-110 l-22 18 l4 -18 h-22 a10 10 0 0 1 -10 -10 v-36 a10 10 0 0 1 10 -10z" fill="#fff" stroke="#0b2a66" stroke-width="4" stroke-linejoin="round"/>
+    <text x="365" y="88" font-family="'DejaVu Sans Mono',monospace" font-size="16" font-weight="700" fill="#0b2a66">who's your</text>
+    <text x="365" y="108" font-family="'DejaVu Sans Mono',monospace" font-size="16" font-weight="700" fill="#e5484d">parent?!</text>
+  </g>
+
+  <!-- cat body -->
+  <ellipse cx="270" cy="290" rx="165" ry="62" fill="#f2a24a" stroke="#0b2a66" stroke-width="6"/>
+  <g stroke="#a85a14" stroke-width="6" stroke-linecap="round" fill="none">
+    <path d="M165 258 q8 14 0 28"/><path d="M200 252 q8 16 0 32"/><path d="M236 250 q8 16 0 32"/>
+  </g>
+  <!-- belly -->
+  <ellipse cx="280" cy="318" rx="95" ry="26" fill="#fff4e0" opacity=".9"/>
+  <!-- paddling paws -->
+  <ellipse cx="190" cy="345" rx="26" ry="14" fill="#fff4e0" stroke="#0b2a66" stroke-width="5"/>
+  <ellipse cx="330" cy="348" rx="26" ry="14" fill="#fff4e0" stroke="#0b2a66" stroke-width="5"/>
+
+  <!-- head (right side, facing the viewer's right) -->
+  <g stroke="#0b2a66" stroke-width="6" stroke-linejoin="round">
+    <path d="M395 232 l8 -50 l36 24z" fill="#f2a24a"/>
+    <path d="M470 206 l34 -26 l8 50z" fill="#f2a24a"/>
+    <ellipse cx="452" cy="270" rx="78" ry="64" fill="#f2a24a"/>
+  </g>
+  <path d="M406 214 l5 -22 l17 11z M490 205 l17 -11 l5 22z" fill="#ffb5b5"/>
+  <!-- head stripes -->
+  <g stroke="#a85a14" stroke-width="6" stroke-linecap="round">
+    <path d="M452 212 v18 M432 216 l4 14 M472 216 l-4 14"/>
+  </g>
+  <!-- eyes: deeply unimpressed -->
+  <ellipse cx="425" cy="262" rx="15" ry="17" fill="#fff" stroke="#0b2a66" stroke-width="4"/>
+  <ellipse cx="480" cy="262" rx="15" ry="17" fill="#fff" stroke="#0b2a66" stroke-width="4"/>
+  <circle cx="433" cy="264" r="7" fill="#0b2a66"/>
+  <circle cx="488" cy="264" r="7" fill="#0b2a66"/>
+  <path d="M407 248 h36 M462 248 h36" stroke="#0b2a66" stroke-width="6" stroke-linecap="round"/>
+  <!-- nose, mouth, whiskers -->
+  <path d="M444 284 h16 l-8 9z" fill="#e5484d" stroke="#0b2a66" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M452 293 q-9 12 -20 6 M452 293 q9 12 20 6" fill="none" stroke="#0b2a66" stroke-width="4" stroke-linecap="round"/>
+  <g stroke="#0b2a66" stroke-width="3" stroke-linecap="round">
+    <path d="M410 286 l-34 -6 M410 296 l-36 6 M494 286 l34 -6 M494 296 l36 6"/>
+  </g>
+  <!-- tiny captain's hat -->
+  <path d="M410 196 q42 -34 84 0 q-42 12 -84 0z" fill="#fff" stroke="#0b2a66" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M430 188 q22 -10 44 0" fill="none" stroke="#1d63ed" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- wordmark -->
+  <text x="545" y="225" font-family="'Trebuchet MS',sans-serif" font-size="108" font-weight="900" fill="#0b2a66" letter-spacing="-2">focker</text>
+  <text x="549" y="262" font-family="'DejaVu Sans Mono',monospace" font-size="23" font-weight="700" fill="#1d63ed">docker, but you meet the family</text>
+  <text x="549" y="292" font-family="'DejaVu Sans Mono',monospace" font-size="17" fill="#0b2a66" opacity=".75">$ focker adopt-external greg  # meet the family</text>
+  <text x="549" y="316" font-family="'DejaVu Sans Mono',monospace" font-size="15" fill="#0b2a66" opacity=".6">ppid=1 is not a personality. reparent responsibly.</text>
+
+  <!-- foam on the waves in front -->
+  <path d="M0 392 q30 -22 60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 V460 H0Z" fill="#1d63ed" opacity=".4"/>
+</svg>

@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+    <img src="docs/assets/logo.svg" alt="focker: a grumpy cat carrying nervous containers, asking who their parent is" width="720">
+  </picture>
+</p>
+
 # focker
 
 **Think docker, but it's meet the Fockers.**

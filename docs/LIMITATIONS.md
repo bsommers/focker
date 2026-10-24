@@ -1,3 +1,5 @@
+<img src="assets/icon-64.png" alt="focker" width="48" align="right">
+
 # focker limitations
 
 These come from the kernel or from deliberate scope decisions. Each entry says why.
