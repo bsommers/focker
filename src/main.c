@@ -26,6 +26,8 @@ static const char *USAGE =
     "  tree      show a family's process tree\n"
     "  inspect   show a family's members and the fds it holds\n"
     "  logs      print a family's log, or an adopted child's captured output\n"
+    "  fg        attach this terminal to a family's terminal (Ctrl-P Ctrl-Q detaches)\n"
+    "  adopt-external  move a job from another terminal into a family (needs criu)\n"
     "  freeze    stop processes in a family with SIGSTOP\n"
     "  thaw      resume processes in a family with SIGCONT\n"
     "  stop      signal a family's direct children (default SIGTERM)\n"
@@ -37,13 +39,14 @@ static const char *USAGE =
     "Exit codes: 0 success, 1 failure, 2 usage error.\n";
 
 static const char *RUN_USAGE =
-    "usage: focker run [-n NAME] [-d] [-l] [--] CMD [ARG...]\n"
+    "usage: focker run [-n NAME] [-d [-t]] [-l] [--] CMD [ARG...]\n"
     "\n"
     "Start a family. focker marks itself PR_SET_CHILD_SUBREAPER and runs CMD as its\n"
     "child (the first, \"old\" parent). Anything orphaned below it lands on focker.\n"
     "\n"
     "  -n, --name NAME   family name (default: random, like suspicious_jack)\n"
     "  -d, --detach      run in the background; output goes to 'focker logs NAME'\n"
+    "  -t, --tty         with -d: run CMD on a terminal that focker holds\n"
     "  -l, --linger      keep running when the family has no processes left\n"
     "  -h, --help        show this help\n"
     "\n"
@@ -190,22 +193,26 @@ static int cmd_run(int argc, char **argv)
     static const struct option opts[] = { { "name", required_argument, 0, 'n' },
                                            { "detach", no_argument, 0, 'd' },
                                            { "linger", no_argument, 0, 'l' },
+                                           { "tty", no_argument, 0, 't' },
                                            { "help", no_argument, 0, 'h' },
                                            { 0, 0, 0, 0 } };
     const char *name = NULL;
-    bool detach = false, linger = false;
+    bool detach = false, linger = false, tty = false;
     int c;
-    while ((c = getopt_long(argc, argv, "+n:dlh", opts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "+n:dlth", opts, NULL)) != -1) {
         switch (c) {
         case 'n': name = optarg; break;
         case 'd': detach = true; break;
         case 'l': linger = true; break;
+        case 't': tty = true; break;
         case 'h': fputs(RUN_USAGE, stdout); return FK_OK;
         default: return usage_error(RUN_USAGE, NULL, NULL);
         }
     }
     if (optind >= argc)
         return usage_error(RUN_USAGE, "missing command%s", "");
+    if (tty && !detach)
+        return usage_error(RUN_USAGE, "-t needs -d (a foreground family already has your terminal)%s", "");
     char gen[NAME_MAX_LEN + 1];
     if (!name) {
         random_name(gen, sizeof gen);
@@ -233,60 +240,16 @@ static int cmd_run(int argc, char **argv)
     char **cmd = argv + optind;
 
     if (!detach) {
-        int rc = supervisor_run(name, dir, cmd, false, linger, -1);
+        int rc = supervisor_run(name, dir, cmd, false, linger, false, -1);
         if (rc == 127) /* never started: free the name */
             cmd_rm(name, true);
         return rc;
     }
 
-    int ready[2];
-    if (pipe2(ready, O_CLOEXEC) < 0) {
-        fprintf(stderr, "focker: pipe: %s\n", strerror(errno));
-        return FK_FAIL;
-    }
-    fflush(NULL);
-    pid_t pid = fork();
-    if (pid < 0) {
-        fprintf(stderr, "focker: fork: %s\n", strerror(errno));
-        close(ready[0]);
-        close(ready[1]);
-        return FK_FAIL;
-    }
-    if (pid == 0) {
-        close(ready[0]);
-        setsid();
-        char logpath[PATH_MAX + 16];
-        snprintf(logpath, sizeof logpath, "%s/focker.log", dir);
-        int log = open(logpath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
-        int null = open("/dev/null", O_RDONLY | O_CLOEXEC);
-        if (log < 0 || null < 0)
-            _exit(FK_FAIL);
-        dup2(null, 0);
-        dup2(log, 1);
-        dup2(log, 2);
-        setvbuf(stdout, NULL, _IOLBF, 0);
-        _exit(supervisor_run(name, dir, cmd, true, linger, ready[1]));
-    }
-    close(ready[1]);
-    char b;
-    ssize_t n;
-    while ((n = read(ready[0], &b, 1)) < 0 && errno == EINTR)
-        ;
-    close(ready[0]);
-    if (n != 1) {
-        char logpath[PATH_MAX + 16], line[512] = "";
-        snprintf(logpath, sizeof logpath, "%s/focker.log", dir);
-        FILE *f = fopen(logpath, "re");
-        while (f && fgets(line, sizeof line, f))
-            ;
-        if (f)
-            fclose(f);
-        fprintf(stderr, "focker: family '%s' failed to start%s%s", name, line[0] ? ": " : "\n", line);
-        cmd_rm(name, true);
-        return FK_FAIL;
-    }
-    printf("%s\n", name);
-    return FK_OK;
+    int rc = start_detached(name, dir, cmd, linger, tty);
+    if (rc == FK_OK)
+        printf("%s\n", name);
+    return rc;
 }
 
 /* ---- cutover ------------------------------------------------------------ */
@@ -477,6 +440,76 @@ static int cmd_inspect(int argc, char **argv)
     return simple_request(name, args, json ? 2 : 1);
 }
 
+static const char *FG_USAGE =
+    "usage: focker fg NAME\n"
+    "\n"
+    "Attach this terminal to the terminal of family NAME (one started with 'run -d -t'):\n"
+    "you see the job's output, and your keys, Ctrl-C and window size reach it.\n"
+    "One terminal at a time: a second 'fg' takes the job over and the first exits.\n"
+    "\n"
+    "  Ctrl-P Ctrl-Q     detach; the job keeps running and its output goes to 'focker logs NAME'\n"
+    "  -h, --help        show this help\n"
+    "\n"
+    "When the job ends, fg exits with its exit status (128+N if killed by signal N).\n";
+
+static int cmd_fg_main(int argc, char **argv)
+{
+    if (wants_help(argc, argv)) {
+        fputs(FG_USAGE, stdout);
+        return FK_OK;
+    }
+    if (argc != 2)
+        return usage_error(FG_USAGE, "expected exactly one family name%s", "");
+    if (need_name(argv[1], FG_USAGE) != FK_OK)
+        return FK_USAGE;
+    return cmd_fg(argv[1]);
+}
+
+static const char *ADOPT_USAGE =
+    "usage: focker adopt-external [-y] [--dry-run] NAME PID\n"
+    "\n"
+    "Move the job containing PID (its whole process group, so a pipeline moves together),\n"
+    "started in another terminal, into family NAME, using criu to checkpoint it and\n"
+    "restore it as focker's child. NAME is joined if running, else started (detached;\n"
+    "it ends with the job). A job on a terminal gets a new one focker holds: its output goes to\n"
+    "'focker logs NAME' until 'focker fg NAME'.\n"
+    "\n"
+    "Everything that can be checked is checked first, with a trial dump while the job\n"
+    "keeps running; then you are asked before the original is stopped and killed.\n"
+    "\n"
+    "  -y, --yes         don't ask\n"
+    "      --dry-run     check and print the plan; change nothing\n"
+    "  -h, --help        show this help\n"
+    "\n"
+    "Needs criu with CAP_CHECKPOINT_RESTORE (sudo setcap cap_checkpoint_restore+eip $(command -v criu)),\n"
+    "and, under Yama ptrace_scope 1, kernel.yama.ptrace_scope=0. $FOCKER_CRIU picks the criu binary.\n";
+
+static int cmd_adopt_external_main(int argc, char **argv)
+{
+    static const struct option opts[] = { { "yes", no_argument, 0, 'y' },
+                                           { "dry-run", no_argument, 0, 'D' },
+                                           { "help", no_argument, 0, 'h' },
+                                           { 0, 0, 0, 0 } };
+    bool yes = false, dry_run = false;
+    int c;
+    while ((c = getopt_long(argc, argv, "yh", opts, NULL)) != -1) {
+        switch (c) {
+        case 'y': yes = true; break;
+        case 'D': dry_run = true; break;
+        case 'h': fputs(ADOPT_USAGE, stdout); return FK_OK;
+        default: return usage_error(ADOPT_USAGE, NULL, NULL);
+        }
+    }
+    if (argc - optind != 2)
+        return usage_error(ADOPT_USAGE, "expected a family name and a pid%s", "");
+    if (need_name(argv[optind], ADOPT_USAGE) != FK_OK)
+        return FK_USAGE;
+    pid_t pid;
+    if (parse_pid(argv[optind + 1], &pid) < 0)
+        return usage_error(ADOPT_USAGE, "bad pid '%s'", argv[optind + 1]);
+    return cmd_adopt_external(argv[optind], pid, yes, dry_run);
+}
+
 static int cmd_named(int argc, char **argv)
 {
     char usage[128];
@@ -627,6 +660,10 @@ int main(int argc, char **argv)
         return cmd_named(argc, argv);
     if (strcmp(cmd, "logs") == 0)
         return cmd_logs_main(argc, argv);
+    if (strcmp(cmd, "fg") == 0)
+        return cmd_fg_main(argc, argv);
+    if (strcmp(cmd, "adopt-external") == 0)
+        return cmd_adopt_external_main(argc, argv);
     if (strcmp(cmd, "freeze") == 0 || strcmp(cmd, "thaw") == 0)
         return cmd_freeze_thaw(argc, argv);
     if (strcmp(cmd, "stop") == 0)

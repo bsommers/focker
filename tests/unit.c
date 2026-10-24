@@ -416,6 +416,124 @@ static void test_tcp(void)
     test_tcp_mapped();
 }
 
+static int roots_of(const struct procent *ps, const pid_t *pgids, int n, pid_t pgid, pid_t *roots)
+{
+    return job_roots(ps, n, pgids, pgid, roots, MAX_ROOTS);
+}
+
+static void test_job_roots(void)
+{
+    puts("job roots");
+    pid_t r[MAX_ROOTS];
+    /* pid, ppid (sorted by pid, as proc_list returns them) and each one's pgid */
+    const struct procent ps[] = { { 1, 0 },   { 50, 1 },  { 60, 50 }, { 61, 50 }, { 62, 50 }, { 63, 50 },
+                                  { 70, 50 }, { 71, 70 }, { 72, 71 }, { 80, 50 }, { 85, 95 }, { 90, 50 },
+                                  { 95, 50 } };
+    const pid_t pg[] = { 1, 50, 60, 61, 61, 61, 70, 70, 70, 90, 95, 90, 95 };
+    int n = (int)(sizeof ps / sizeof ps[0]);
+    CHECK("a single process is its own root", roots_of(ps, pg, n, 60, r) == 1 && r[0] == 60);
+    CHECK("a pipeline's siblings are each a root",
+          roots_of(ps, pg, n, 61, r) == 3 && r[0] == 61 && r[1] == 62 && r[2] == 63);
+    CHECK("children in the group are not roots", roots_of(ps, pg, n, 70, r) == 1 && r[0] == 70);
+    CHECK("roots come back sorted by pid", roots_of(ps, pg, n, 90, r) == 2 && r[0] == 80 && r[1] == 90);
+    CHECK("a child with a lower pid than its parent", roots_of(ps, pg, n, 95, r) == 1 && r[0] == 95);
+    CHECK("an empty group has no roots", roots_of(ps, pg, n, 4242, r) == 0);
+    CHECK("too many roots fails", job_roots(ps, n, pg, 61, r, 2) < 0);
+}
+
+static void join(char **argv, int argc, char *out, size_t len)
+{
+    out[0] = '\0';
+    for (int i = 0; i < argc; i++)
+        snprintf(out + strlen(out), len - strlen(out), "%s%s", i ? " " : "", argv[i]);
+}
+
+/* pipes-data.img: magic, then (u32 LE length, PipeDataEntry, raw bytes) per pipe */
+static void test_pipe_data(void)
+{
+    static const unsigned char img[] = {
+        1, 2, 3, 4, 5, 6, 7, 8,                                           /* magic */
+        7, 0, 0, 0, 0x08, 77, 0x10, 3, 0x18, 0x80, 0x20, 'a', 'b', 'c',   /* pipe 77: 3 bytes, size 4096 */
+        9, 0, 0, 0, 0x08, 0xac, 0x02, 0x10, 2, 0x18, 0x80, 0x80, 0x04, 'x', 'y', /* pipe 300: 2 bytes, 65536 */
+    };
+    size_t off, n;
+    unsigned long size;
+    CHECK("pipe data: first entry", criu_pipe_data(img, sizeof img, 77, &off, &n, &size) == 1 && n == 3 &&
+                                        size == 4096 && memcmp(img + off, "abc", 3) == 0);
+    CHECK("pipe data: second entry", criu_pipe_data(img, sizeof img, 300, &off, &n, &size) == 1 && n == 2 &&
+                                         size == 65536 && memcmp(img + off, "xy", 2) == 0);
+    CHECK("pipe data: absent pipe", criu_pipe_data(img, sizeof img, 5, &off, &n, &size) == 0);
+    CHECK("pipe data: truncated bytes", criu_pipe_data(img, sizeof img - 1, 300, &off, &n, &size) == -1);
+    CHECK("pipe data: truncated entry", criu_pipe_data(img, 14, 300, &off, &n, &size) == -1);
+}
+
+/* pstree.img: the pgid (field 3) of every task in the root's group becomes the new group's */
+static void test_pstree_regroup(void)
+{
+    static const unsigned char in[] = {
+        0x19, 0x43, 0x56, 0x54, 0x30, 0x30, 0x27, 0x50,                       /* magic */
+        0x16, 0, 0, 0, 0x08, 0xea, 0x86, 0x82, 0x01, 0x10, 0x00, 0x18, 0xea, 0x86, 0x82, 0x01, /* root */
+        0x20, 0xe5, 0x86, 0x82, 0x01, 0x28, 0xea, 0x86, 0x82, 0x01,
+        0x19, 0, 0, 0, 0x08, 0xeb, 0x86, 0x82, 0x01, 0x10, 0xea, 0x86, 0x82, 0x01, /* its child */
+        0x18, 0xea, 0x86, 0x82, 0x01, 0x20, 0xe5, 0x86, 0x82, 0x01, 0x28, 0xeb, 0x86, 0x82, 0x01,
+    };
+    static const unsigned char want[] = {
+        0x19, 0x43, 0x56, 0x54, 0x30, 0x30, 0x27, 0x50,
+        0x13, 0, 0, 0, 0x08, 0xea, 0x86, 0x82, 0x01, 0x10, 0x00, 0x18, 0x4d,
+        0x20, 0xe5, 0x86, 0x82, 0x01, 0x28, 0xea, 0x86, 0x82, 0x01,
+        0x16, 0, 0, 0, 0x08, 0xeb, 0x86, 0x82, 0x01, 0x10, 0xea, 0x86, 0x82, 0x01, /* ppid unchanged */
+        0x18, 0x4d, 0x20, 0xe5, 0x86, 0x82, 0x01, 0x28, 0xeb, 0x86, 0x82, 0x01,
+    };
+    unsigned char out[sizeof in + 64];
+    int n = criu_pstree_regroup(in, sizeof in, 2130794, 77, out, sizeof out);
+    CHECK("pstree regroup: pgids rewritten, lengths fixed", n == (int)sizeof want && memcmp(out, want, sizeof want) == 0);
+    CHECK("pstree regroup: truncated image", criu_pstree_regroup(in, sizeof in - 1, 2130794, 77, out, sizeof out) < 0);
+    CHECK("pstree regroup: output too small", criu_pstree_regroup(in, sizeof in, 2130794, 77, out, 20) < 0);
+}
+
+static void test_criu_argv(void)
+{
+    puts("criu argv");
+    struct criu_job j = { .pgid = 61, .roots = { 61, 62 }, .nroots = 2, .pipes = { 4242, 77 }, .npipes = 2 };
+    char *argv[64], got[1024];
+    int argc = criu_dump_argv("/x/criu", &j, 62, "/run/img", true, argv, 64);
+    join(argv, argc, got, sizeof got);
+    CHECK("a trial dump leaves the job running",
+          strcmp(got, "/x/criu dump --unprivileged --shell-job -t 62 -D /run/img -o dump.log --leave-running") == 0);
+    CHECK("argv ends with NULL", argv[argc] == NULL);
+    argc = criu_dump_argv("/x/criu", &j, 61, "/run/img", false, argv, 64);
+    join(argv, argc, got, sizeof got);
+    CHECK("the real dump leaves it stopped",
+          strcmp(got, "/x/criu dump --unprivileged --shell-job -t 61 -D /run/img -o dump.log --leave-stopped") == 0);
+
+    const int none[] = { -1, -1 }, one[] = { 5, -1 };
+    argc = criu_restore_argv("/x/criu", &j, "/run/img", none, argv, 64);
+    join(argv, argc, got, sizeof got);
+    CHECK("restore without pipes",
+          strcmp(got, "/x/criu restore --unprivileged --shell-job --restore-detached -D /run/img -o restore.log "
+                      "--pidfile /run/img/restored.pid --leave-stopped") == 0);
+    argc = criu_restore_argv("/x/criu", &j, "/run/img", one, argv, 64);
+    join(argv, argc, got, sizeof got);
+    CHECK("restore hands over the pipes this root holds",
+          strcmp(got, "/x/criu restore --unprivileged --shell-job --restore-detached -D /run/img -o restore.log "
+                      "--pidfile /run/img/restored.pid --leave-stopped --inherit-fd fd[5]:pipe:[4242]") == 0);
+    CHECK("too small an argv fails", criu_dump_argv("/x/criu", &j, 61, "/run/img", true, argv, 4) < 0);
+}
+
+static void test_stat_fields(void)
+{
+    puts("stat fields");
+    proc_root = root;
+    PUT("300/stat", "300 (a (b) c) S 1 290 280 34817 290 4194304 0 0\n");
+    PUT("300/status", "Name:\tx\nUid:\t1000\t1000\t1000\t1000\n");
+    CHECK("pgid", proc_pgid(300) == 290);
+    CHECK("sid", proc_sid(300) == 280);
+    CHECK("tty_nr", proc_tty_nr(300) == 34817);
+    CHECK("tpgid", proc_tpgid(300) == 290);
+    CHECK("uid", proc_uid(300) == 1000);
+    CHECK("a missing pid", proc_pgid(999) == -1 && proc_tty_nr(999) < 0 && proc_uid(999) == (uid_t)-1);
+}
+
 int main(void)
 {
     build_fixture();
@@ -430,6 +548,11 @@ int main(void)
     test_live();
     test_loopback();
     test_tcp();
+    test_stat_fields();
+    test_job_roots();
+    test_criu_argv();
+    test_pipe_data();
+    test_pstree_regroup();
     char cmd[PATH_MAX + 16];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", root);
     if (system(cmd) != 0)

@@ -14,7 +14,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-int client_request(const char *name, char **args, int nargs, struct sbuf *reply)
+static int connect_family(const char *name)
 {
     char dir[PATH_MAX];
     if (family_dir(name, dir, sizeof dir) < 0)
@@ -35,6 +35,67 @@ int client_request(const char *name, char **args, int nargs, struct sbuf *reply)
     }
     if (dfd >= 0)
         close(dfd);
+    return fd;
+}
+
+/* start a detached supervisor for NAME (its state dir already made) and wait
+ * until it is ready; on failure print why and free the name */
+int start_detached(const char *name, const char *dir, char **cmd, bool linger, bool tty)
+{
+    int ready[2];
+    if (pipe2(ready, O_CLOEXEC) < 0) {
+        fprintf(stderr, "focker: pipe: %s\n", strerror(errno));
+        return FK_FAIL;
+    }
+    fflush(NULL);
+    pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "focker: fork: %s\n", strerror(errno));
+        close(ready[0]);
+        close(ready[1]);
+        return FK_FAIL;
+    }
+    if (pid == 0) {
+        close(ready[0]);
+        setsid();
+        char logpath[PATH_MAX + 16];
+        snprintf(logpath, sizeof logpath, "%s/focker.log", dir);
+        int log = open(logpath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+        int null = open("/dev/null", O_RDONLY | O_CLOEXEC);
+        if (log < 0 || null < 0)
+            _exit(FK_FAIL);
+        dup2(null, 0);
+        dup2(log, 1);
+        dup2(log, 2);
+        setvbuf(stdout, NULL, _IOLBF, 0);
+        _exit(supervisor_run(name, dir, cmd, true, linger, tty, ready[1]));
+    }
+    close(ready[1]);
+    char b;
+    ssize_t n;
+    while ((n = read(ready[0], &b, 1)) < 0 && errno == EINTR)
+        ;
+    close(ready[0]);
+    if (n != 1) {
+        char logpath[PATH_MAX + 16], line[512] = "";
+        snprintf(logpath, sizeof logpath, "%s/focker.log", dir);
+        FILE *f = fopen(logpath, "re");
+        while (f && fgets(line, sizeof line, f))
+            ;
+        if (f)
+            fclose(f);
+        fprintf(stderr, "focker: family '%s' failed to start%s%s", name, line[0] ? ": " : "\n", line);
+        cmd_rm(name, true);
+        return FK_FAIL;
+    }
+    return FK_OK;
+}
+
+int client_request(const char *name, char **args, int nargs, struct sbuf *reply)
+{
+    int fd = connect_family(name);
+    if (fd < 0)
+        return -1;
     for (int i = 0; i < nargs; i++) {
         size_t n = strlen(args[i]) + 1;
         if (send(fd, args[i], n, MSG_NOSIGNAL) != (ssize_t)n) {
@@ -71,6 +132,53 @@ int client_request(const char *name, char **args, int nargs, struct sbuf *reply)
     memmove(reply->p, reply->p + skip, reply->len - skip + 1);
     reply->len -= skip;
     return rc;
+}
+
+int client_attach(const char *name, int *master, int *conn)
+{
+    int fd = connect_family(name);
+    if (fd < 0)
+        return -1;
+    if (send(fd, "attach", 7, MSG_NOSIGNAL) != 7) {
+        close(fd);
+        return -1;
+    }
+    shutdown(fd, SHUT_WR);
+    char head[3];
+    union { struct cmsghdr h; char buf[CMSG_SPACE(sizeof(int))]; } u;
+    struct iovec iov = { .iov_base = head, .iov_len = sizeof head };
+    struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1, .msg_control = u.buf, .msg_controllen = sizeof u.buf };
+    ssize_t n;
+    while ((n = recvmsg(fd, &msg, MSG_CMSG_CLOEXEC | MSG_WAITALL)) < 0 && errno == EINTR)
+        ;
+    *master = -1;
+    for (struct cmsghdr *c = n > 0 ? CMSG_FIRSTHDR(&msg) : NULL; c; c = CMSG_NXTHDR(&msg, c))
+        if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_RIGHTS)
+            memcpy(master, CMSG_DATA(c), sizeof(int));
+    if (n == 3 && memcmp(head, "ok\n", 3) == 0) {
+        *conn = fd;
+        return 0;
+    }
+    if (*master >= 0)
+        close(*master);
+    *master = -1;
+    if (n != 3 || memcmp(head, "err", 3) != 0) {
+        close(fd);
+        errno = n < 0 ? errno : EPROTO;
+        return -1;
+    }
+    char buf[4096];
+    struct sbuf why = { 0 };
+    while ((n = read(fd, buf, sizeof buf)) > 0 || (n < 0 && errno == EINTR))
+        if (n > 0)
+            sb_printf(&why, "%.*s", (int)n, buf);
+    close(fd);
+    const char *text = why.p ? why.p : "";
+    if (*text == '\n')
+        text++;
+    fprintf(stderr, "focker: %s", text);
+    sb_free(&why);
+    return 1;
 }
 
 static const char *field(const char *text, const char *key, char *out, size_t len)
@@ -235,6 +343,8 @@ static void tree_print(const struct procent *ps, int n, pid_t pid, const char *p
                 snprintf(note, sizeof note, "  (adopted from %d)", ms[j].old_ppid);
             else if (ms[j].origin == 'o')
                 snprintf(note, sizeof note, "  (orphan, adopted)");
+            else if (ms[j].origin == 'x')
+                snprintf(note, sizeof note, "  (moved from another terminal, was under %d)", ms[j].old_ppid);
         }
         printf("%s%s%d %s%s\n", prefix, last ? "└─ " : "├─ ", ps[i].pid, cmd, note);
         char next[512];

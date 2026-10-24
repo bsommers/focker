@@ -34,8 +34,10 @@ examples: $(EXAMPLES)
 $(BUILD)/%: examples/%.c | $(BUILD)
 	$(CC) $(CFLAGS) $(FK_CFLAGS) -pthread -o $@ $<
 
-$(BUILD)/unit: tests/unit.c $(BUILD)/procfs.o $(BUILD)/util.o $(BUILD)/unixdiag.o $(BUILD)/inetdiag.o src/focker.h
-	$(CC) $(CFLAGS) $(FK_CFLAGS) -o $@ tests/unit.c $(BUILD)/procfs.o $(BUILD)/util.o $(BUILD)/unixdiag.o $(BUILD)/inetdiag.o
+UNIT_OBJ := $(filter-out $(BUILD)/main.o,$(OBJ))
+
+$(BUILD)/unit: tests/unit.c $(UNIT_OBJ) src/focker.h
+	$(CC) $(CFLAGS) $(FK_CFLAGS) -o $@ tests/unit.c $(UNIT_OBJ)
 
 unit: $(BUILD)/unit
 	$(BUILD)/unit

@@ -9,6 +9,19 @@ variables, the control protocol in docs/USAGE.md) is the public API.
 ## [Unreleased]
 
 ### Added
+- `focker adopt-external [-y] [--dry-run] NAME PID` moves a job started in another terminal (PID's process
+  group, so a pipeline moves together) into a family, with criu: same PIDs, new parent. Everything that can
+  be checked is checked first, including a trial dump while the job runs, and it asks before the original is
+  killed. A terminal job gets a family terminal. A failed dump leaves the job running where it was; a failed
+  restore keeps the images and prints a retry line. Needs criu with `CAP_CHECKPOINT_RESTORE`; under Yama
+  `ptrace_scope` 1 it names the sysctl to run. `FOCKER_CRIU` picks the binary.
+- `focker run -d -t` runs the first command on a terminal that focker holds; its output goes to
+  `focker logs NAME`.
+- `focker fg NAME` attaches this terminal to a family's terminal. Ctrl-P Ctrl-Q detaches; a second `fg`
+  takes the terminal over; when the job ends, `fg` exits with its status.
+- Member origin `external` (`x` in the `members` request), held-fd kind `pty`, control requests `attach`
+  and `adopt`.
+- `tests/ptyrun.py` (runs a command on a pty for the tests) and `tests/mkjob.py` (starts shell-style jobs).
 - `focker release NAME FD...` closes held fds, for example to send a child EOF on the stdin its old parent held.
 - `ps --json` and `inspect --json`. Keys are documented in docs/USAGE.md. Strings are always valid UTF-8.
 - Test fixtures: `oldparent -I` (holds each child's stdin), `ticker -e` (exits 5 on stdin EOF).

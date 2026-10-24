@@ -59,6 +59,11 @@ bool     proc_is_descendant(pid_t pid, pid_t ancestor);
 int      proc_threads(pid_t pid, pid_t *out, int max);
 int      proc_fds(pid_t pid, struct fdent *out, int max);
 uint64_t proc_sigpending(pid_t pid);                  /* shared + every thread's private set */
+pid_t    proc_pgid(pid_t pid);                        /* -1 if gone */
+pid_t    proc_sid(pid_t pid);                         /* -1 if gone */
+int      proc_tty_nr(pid_t pid);                      /* /proc/PID/stat field 7: 0 none, -1 gone */
+pid_t    proc_tpgid(pid_t pid);                       /* its terminal's foreground group: -1 none or gone */
+uid_t    proc_uid(pid_t pid);                         /* real uid, (uid_t)-1 if gone */
 
 /* unixdiag.c */
 int           unixdiag_load(void);
@@ -73,7 +78,8 @@ bool          inet_is_loopback(int family, const void *addr);
 /* family state, owned by supervisor.c */
 struct member {
     pid_t pid, old_ppid;
-    char  origin;       /* 'r' started by run, 'a' adopted by cutover, 'o' orphan the kernel handed us */
+    char  origin;       /* 'r' started by run, 'a' adopted by cutover, 'o' orphan the kernel handed us,
+                           'x' moved from another terminal by adopt-external */
     bool  alive;
     int   status;
     char  cmd[160];
@@ -84,7 +90,7 @@ struct stolen {
     pid_t child, old_parent;
     int   parent_fd, child_fd;
     bool  drain;
-    char  kind[8];      /* pipe-r, pipe-w, unix, tcp */
+    char  kind[8];      /* pipe-r, pipe-w, unix, tcp, pty */
     char  log[PATH_MAX + 64];
 };
 
@@ -122,16 +128,74 @@ int  cutover_step(struct cutover_job *job, struct sbuf *out);
 int  cutover_cancel(struct cutover_job *job, const char *why, struct sbuf *out); /* rolls back; returns 1 */
 bool cutover_owns(const struct cutover_job *job, pid_t pid);                      /* pid is one of its targets */
 
-/* supervisor.c */
-int supervisor_run(const char *name, const char *dir, char **argv, bool detached, bool linger, int ready_fd);
+/* pty.c: both fds O_CLOEXEC, the slave O_NOCTTY; tio/ws may be NULL (kernel defaults) */
+struct termios;
+struct winsize;
+int pty_open(int *master, int *slave, const struct termios *tio, const struct winsize *ws);
+int pty_take_ctty(int slave);                         /* TIOCSCTTY for the calling session leader */
+
+/* supervisor.c: argv NULL starts no first command; tty (needs detached) runs it on a focker-held pty */
+int supervisor_run(const char *name, const char *dir, char **argv, bool detached, bool linger, bool tty,
+                   int ready_fd);
+
+/* client.c: start a detached supervisor for NAME, its state dir made; FK_OK once it is ready */
+int start_detached(const char *name, const char *dir, char **cmd, bool linger, bool tty);
 
 /* client.c */
 int client_request(const char *name, char **args, int nargs, struct sbuf *reply); /* 0 ok, 1 err, -1 unreachable */
+int client_attach(const char *name, int *master, int *conn); /* 0, 1 (err printed), -1 unreachable */
 int client_info(const char *name, pid_t *pid, int *nchildren, char *cmd, size_t cmdlen);
 int cmd_ps(bool all, bool json);
 int cmd_tree(const char *name);
 int cmd_logs(const char *name, pid_t adopted, bool follow);
 int cmd_rm(const char *name, bool quiet);
 int cmd_signal_pids(const char *name, const pid_t *pids, int n, bool stop);
+
+/* criu.c: moving a job from another terminal (adopt-external) */
+#define MAX_ROOTS 16
+struct criu_job {
+    pid_t pgid;
+    pid_t roots[MAX_ROOTS];     /* group members whose parent is outside the group; each is dumped on its own */
+    int   nroots;
+    pid_t members[MAX_PIDS];    /* the group plus every root's subtree */
+    int   nmembers;
+    bool  tty;
+    int   tty_nr;               /* the job's terminal, as /proc/PID/stat encodes it */
+    unsigned long pipes[MAX_ROOTS]; /* inodes of pipes joining two roots */
+    unsigned pipe_rd[MAX_ROOTS], pipe_wr[MAX_ROOTS]; /* per pipe: bit r set if roots[r] holds its read/write end */
+    int   npipes;
+};
+#define CRIU_TIMEOUT_MS 60000                         /* per criu invocation */
+int job_roots(const struct procent *ps, int n, const pid_t *pgids, pid_t pgid, pid_t *roots, int max); /* -1 if > max */
+int criu_find(char *path, size_t len);                /* $FOCKER_CRIU, else criu on PATH */
+int criu_capable(const char *criu, char *why, size_t len); /* 1 capable, 0 not (why says so) */
+int criu_job_load(pid_t pid, struct criu_job *j, char *why, size_t len);
+/* argv builders: argc, or -1 if max is too small. The strings live in a static
+ * arena per builder, valid until that builder's next call. pipe_fds[k] is the
+ * restorer's fd for j->pipes[k], or -1 if this root holds no end of it. */
+int criu_dump_argv(const char *criu, const struct criu_job *j, pid_t root, const char *dir, bool trial, char **argv,
+                   int max);
+int criu_restore_argv(const char *criu, const struct criu_job *j, const char *dir, const int *pipe_fds, char **argv,
+                      int max);
+int cmd_adopt_external(const char *name, pid_t pid, bool yes, bool dry_run);
+void criu_log_error(const char *log, pid_t root, char *why, size_t len); /* why criu failed, from its log */
+void rm_tree(const char *dir);
+/* the buffered data of pipe ino in a pipes-data.img held in img[0..len): 1 found (img[*off..+*n), the pipe's
+ * size in *size), 0 not there, -1 malformed */
+/* pstree.img in[0..len) with every pgid equal to from set to to, into out; its length, or -1 */
+int criu_pstree_regroup(const unsigned char *in, size_t len, unsigned long from, unsigned long to, unsigned char *out,
+                        size_t cap);
+int criu_pipe_data(const unsigned char *img, size_t len, unsigned long ino, size_t *off, size_t *n,
+                   unsigned long *size);
+
+/* adopt.c: the supervisor side of adopt-external. Stops, dumps, kills and
+ * restores the job as children of the calling supervisor, which must lead its
+ * own session when the job has a terminal. 0 moved (*master: the job's new pty
+ * master, or -1), 1 not (the transcript in out says whether it was still
+ * running where it was, or the point of no return was passed). */
+int adopt_run(struct family *f, const struct criu_job *j, const char *criu, int *master, struct sbuf *out);
+
+/* attach.c */
+int cmd_fg(const char *name);
 
 #endif

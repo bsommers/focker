@@ -23,7 +23,8 @@ Output goes to stdout and diagnostics to stderr. When a cutover fails, its whole
 - **family**: one supervisor process plus everything below it, identified by a NAME (`[A-Za-z0-9_.-]`, at most 48 characters, not starting with `.` or `-`). If you don't give a name, `run` picks one like `suspicious_jack`.
 - **supervisor**: the `focker run` process. It sets `PR_SET_CHILD_SUBREAPER`, so every orphan in its subtree is reparented to it, and it serves a control socket.
 - **first command**: the CMD given to `run`. It is usually the "old parent" you plan to replace.
-- **member origins**: `run` (the first command), `adopted` (moved by `cutover`), `orphan` (the kernel reparented it to focker without a cutover, e.g. its parent simply exited).
+- **member origins**: `run` (the first command), `adopted` (moved by `cutover`), `orphan` (the kernel reparented it to focker without a cutover, e.g. its parent simply exited), `external` (moved from another terminal by `adopt-external`).
+- **family terminal**: a pty whose master the supervisor holds (`run -d -t`, or a terminal job moved by `adopt-external`). Its output goes to `focker logs NAME` until `focker fg NAME` attaches a terminal to it.
 - **held fds**: the old parent's ends of a child's pipes and sockets. focker took them over so the child never sees EOF or EPIPE.
 
 ---
@@ -31,13 +32,14 @@ Output goes to stdout and diagnostics to stderr. When a cutover fails, its whole
 ## focker run
 
 ```
-focker run [-n NAME] [-d] [-l] [--] CMD [ARG...]
+focker run [-n NAME] [-d [-t]] [-l] [--] CMD [ARG...]
 ```
 
 | option | default | meaning |
 |---|---|---|
 | `-n, --name NAME` | random | family name |
 | `-d, --detach` | off | run in the background. Prints NAME and returns once the first command has started. stdin is `/dev/null`; stdout and stderr go to `focker logs NAME` |
+| `-t, --tty` | off | with `-d`: run CMD on a family terminal. CMD leads its foreground group, so it sees a terminal (`isatty`, line editing, Ctrl-C); its output goes to `focker logs NAME` until `focker fg NAME`. Without `-d` it is a usage error: a foreground family already has your terminal |
 | `-l, --linger` | off | keep the supervisor alive when the family has no processes left (end it with `focker stop`) |
 
 Option parsing stops at the first non-option, so `focker run -n x ls -la` works without `--`.
@@ -130,6 +132,50 @@ After a successful handover, the family no longer answers focker commands. `fock
 
 Data focker drained before the handover is in `adopted-CHILD-fdN.log`, so CMD sees only what comes after. See [HOWTO: write a new-parent program](HOWTO.md#write-a-new-parent-program).
 
+## focker fg
+
+```
+focker fg NAME
+```
+
+Attaches this terminal to the family terminal of NAME. You see the job's output and your keys, Ctrl-C and window size reach it. The terminal goes back to how it was on every way out.
+
+- **Ctrl-P Ctrl-Q** detaches: `fg` exits 0, the job keeps running, and its output goes to `focker logs NAME` again. Ctrl-P followed by any other key passes both keys through.
+- **One terminal at a time.** A second `fg` takes the job over; the first prints `taken over by another terminal` and exits 0.
+- **When the job ends**, `fg` prints what it printed last, then `NAME: exited N` (or `killed by SIGx`), and exits with the job's status (`128+N` for signal N). `fg` on a family whose terminal job has already ended reports that status the same way.
+- `fg` on a family without a terminal exits 1 with `NAME has no terminal`. `fg` needs a terminal of its own: with stdin not a terminal it exits 1.
+
+## focker adopt-external
+
+```
+focker adopt-external [-y] [--dry-run] NAME PID
+```
+
+Moves the job containing PID, started in another terminal (or by anything else that is not focker), into family NAME. The job is PID's whole process group, so a pipeline moves together, plus every process below it. focker uses criu to checkpoint the job and restore it as the supervisor's child: the same PIDs, the same memory and open files, a new parent. A job that had a terminal gets a family terminal: its output goes to `focker logs NAME` until `focker fg NAME`.
+
+| option | meaning |
+|---|---|
+| `-y, --yes` | don't ask before the original is stopped and killed |
+| `--dry-run` | run every check, including the trial dump, print the plan, and change nothing |
+
+If NAME is running, the job joins it; else a detached family NAME is started for the job, and it ends when the job ends. A terminal job can join only a family that runs detached and has no terminal yet: one terminal job per family.
+
+What happens, in order:
+1. **Checks, while the job keeps running.** criu is found (`$FOCKER_CRIU`, else `criu` on `PATH` or in `/usr/sbin`) and has `CAP_CHECKPOINT_RESTORE`. PID is yours, not already in a family, and its job is not the one running focker. No process in the job leads a session (a shell: adopt a job it started instead), and no pipe leads from the job to a process outside it. Then a **trial dump** of each part of the job (`criu dump --leave-running`, images deleted) catches whatever else criu refuses, such as an established TCP connection or a unix socket to a process outside the job. Any failure exits 1 with the reason and `nothing was changed`.
+2. **The plan** (`plan: job PGID: roots ...`, `plan: processes ...`, the terminal, the family, the images directory), then `kill the original and restore under NAME? [y/N]`. Without `--yes` stdin must be a terminal.
+3. **The move**, in the family's supervisor. Each step prints one `adopt:` line:
+   - `adopt: stopped job PGID (N processes)`: every process gets `SIGSTOP`.
+   - `adopt: dumped ROOT`, once per root (a process of the job whose parent is outside it; a pipeline has one per stage), into `STATE_DIR/criu/ROOT`. If a dump fails, the job is sent `SIGCONT` and runs on where it was: `adopt: dump failed: REASON; job PGID continues where it was`, exit 1. A job that was in the foreground of its terminal is in the background there now (the stop handed the terminal back to its shell): the line then ends `continues, in the background in its terminal; 'fg' there brings it back`.
+   - `adopt: killed the originals (point of no return)`.
+   - `adopt: restored ROOT`, once per root, as a child of the supervisor, stopped. Pipes between the roots are recreated with the bytes they held.
+   - `adopt: job PGID runs under NAME as process group G`: every process got `SIGCONT`. The images are deleted.
+
+After a successful move the job is in a new process group G. The shell in the old terminal may still list the old group as a job until it next prints a prompt, and when that terminal closes it sends `SIGHUP` to every group it lists. The new group is out of its reach. The job's terminal settings come from the old terminal when the job was in the foreground there (else the defaults), and its window size always does.
+
+If the restore fails after the point of no return, whatever was restored is killed, the images stay in `STATE_DIR/criu/ROOT`, and each root gets `adopt: restore failed; images kept in DIR; retry with: CRIU-ARGV`. The family keeps running (lingering) so the images are not removed with it. Exit 1.
+
+Needs criu with `CAP_CHECKPOINT_RESTORE` (`sudo setcap cap_checkpoint_restore+eip "$(command -v criu)"`, once). focker itself stays unprivileged. Under Yama `ptrace_scope` 1, criu may only attach to its own descendants: focker detects that refusal and prints the `sudo sysctl kernel.yama.ptrace_scope=0` that allows it (and the command to set it back).
+
 ## focker ps
 
 ```
@@ -150,7 +196,7 @@ focker tree NAME
 focker inspect [--json] NAME
 ```
 
-`tree` prints the live process tree under the supervisor, with `(adopted from PID)` or `(orphan, adopted)` on direct children. `inspect` lists every member focker has seen (pid, origin, old parent, running or exit status, command) and every held fd (kind, child, child fd, old parent, log path).
+`tree` prints the live process tree under the supervisor, with `(adopted from PID)`, `(orphan, adopted)` or `(moved from another terminal, was under PID)` on direct children. `inspect` lists every member focker has seen (pid, origin, old parent, running or exit status, command) and every held fd (kind, child, child fd, old parent, log path).
 
 `inspect --json` prints the same thing as one JSON document. Every key is always present, with `null` when it doesn't apply. Strings are always valid UTF-8: a byte that isn't, as can happen in a command line, becomes U+FFFD.
 
@@ -164,13 +210,13 @@ focker inspect [--json] NAME
 
 | key | type | meaning |
 |---|---|---|
-| `members[].origin` | `"run"`, `"adopted"`, `"orphan"` | started by `run`, moved by `cutover`, or handed over by the kernel |
-| `members[].from` | int or null | the old parent, for adopted members |
+| `members[].origin` | `"run"`, `"adopted"`, `"orphan"`, `"external"` | started by `run`, moved by `cutover`, handed over by the kernel, or moved by `adopt-external` |
+| `members[].from` | int or null | the old parent, for adopted and external members |
 | `members[].status` | string | `running`, or the same text as the report (`exited 3`, `killed by SIGTERM`) |
 | `members[].exit_code` / `signal` | int / `"SIGx"`, or null | how a dead member ended |
 | `held_fds[].fd` | int | focker's own fd number, as used by `release` and `FOCKER_FDS` |
-| `held_fds[].kind` | `"pipe-r"`, `"pipe-w"`, `"unix"`, `"tcp"` | |
-| `held_fds[].log` | string or null | the drain log, or null for an fd that is only held |
+| `held_fds[].kind` | `"pipe-r"`, `"pipe-w"`, `"unix"`, `"tcp"`, `"pty"` | `pty`: the family terminal's master; `child` is its job, `from` the supervisor |
+| `held_fds[].log` | string or null | the drain log, or null for an fd that is only held (a `pty` while `fg` is attached) |
 
 ## focker logs
 
@@ -228,8 +274,11 @@ Deletes an exited family's state directory. It refuses (exit 1) while the family
 | remembered members per family | 256 | the oldest *dead* member is forgotten. Running members are never evicted |
 | threads per frozen process | 256 | the cutover fails and rolls back |
 | family name | 48 characters, `[A-Za-z0-9_.-]`, no leading `.` or `-` | usage error |
+| `adopt-external`: processes in a job | 64 | refused, nothing changed |
+| `adopt-external`: roots, and pipes between them | 16 each | refused, nothing changed |
+| `adopt-external`: each criu run | 60 s | criu is killed; before the point of no return the job runs on, after it the images are kept |
 
-These are compile-time constants in `src/focker.h` (`MAX_PIDS`, `MAX_STOLEN`, `MAX_MEMBERS`, `MAX_TIDS`, `NAME_MAX_LEN`).
+These are compile-time constants in `src/focker.h` (`MAX_PIDS`, `MAX_STOLEN`, `MAX_MEMBERS`, `MAX_TIDS`, `NAME_MAX_LEN`, `MAX_ROOTS`, `CRIU_TIMEOUT_MS`).
 
 ## Environment
 
@@ -237,6 +286,7 @@ These are compile-time constants in `src/focker.h` (`MAX_PIDS`, `MAX_STOLEN`, `M
 |---|---|
 | `FOCKER_RUNTIME_DIR` | where families live. Default `$XDG_RUNTIME_DIR/focker`, falling back to `/tmp/focker-$UID`. It must be a real directory (not a symlink) owned by you |
 | `FOCKER_FREEZE` | default `--freeze` method for `cutover` |
+| `FOCKER_CRIU` | the criu binary `adopt-external` uses. Default: `criu` on `PATH`, then `/usr/sbin`, `/usr/local/sbin`, `/sbin` |
 
 Precedence is flag > environment > default.
 
@@ -247,22 +297,25 @@ $FOCKER_RUNTIME_DIR/NAME/
 ├── control.sock            control socket (mode 0600; requests from other uids are rejected via SO_PEERCRED)
 ├── pid                     supervisor pid
 ├── cmd                     first command line
-├── focker.log              detached mode only: supervisor log + first command's stdout/stderr
+├── focker.log              detached mode only: supervisor log + first command's stdout/stderr (+ the family terminal's output)
 ├── adopted-PID-fdN.log     output drained from child PID's fd N after a cutover
+├── criu/ROOT/              adopt-external images, while a move runs, and kept after a failed restore
 └── exit                    written on exit: "exited N", "killed by SIGx" or "handed over to CMD"
 ```
 
 ## Control protocol
 
-The control socket is a unix `SOCK_STREAM` socket. A request is a sequence of NUL-terminated tokens followed by `shutdown(SHUT_WR)`. The reply is `ok\n` or `err\n`, then free text, then close. `handover` replies `exec\n` and its transcript, then keeps the connection open across `execve`: the socket is close-on-exec, so EOF means the exec happened, and `\nerr\n` plus a reason means it failed (`focker handover` then exits 1). Requests are served one at a time, except that a cutover waiting for its old parents (up to `--timeout`) runs in the background: meanwhile `info`, `members` and `inspect` are answered and held fds keep draining, while `cutover` (including `--dry-run`), `release`, `stop` and `handover` get `err` and `busy (a cutover is in progress)`. The cutover's own reply is sent when it ends.
+The control socket is a unix `SOCK_STREAM` socket. A request is a sequence of NUL-terminated tokens followed by `shutdown(SHUT_WR)`. The reply is `ok\n` or `err\n`, then free text, then close. `handover` replies `exec\n` and its transcript, then keeps the connection open across `execve`: the socket is close-on-exec, so EOF means the exec happened, and `\nerr\n` plus a reason means it failed (`focker handover` then exits 1). Requests are served one at a time, except that a cutover waiting for its old parents (up to `--timeout`) runs in the background: meanwhile `info`, `members`, `inspect` and `attach` are answered and held fds keep draining, while `cutover` (including `--dry-run`), `release`, `stop`, `handover` and `adopt` get `err` and `busy (a cutover is in progress)`. An `adopt` runs criu in the request itself, so other requests wait for it (each criu run is capped at 60 s). The cutover's own reply is sent when it ends.
 
 | request | tokens |
 |---|---|
 | `info` | prints `name=`, `pid=`, `children=`, `cmd=` lines |
-| `members` | one `PID ORIGIN OLDPPID ALIVE` line per member (ORIGIN is `r`, `a` or `o`) |
+| `members` | one `PID ORIGIN OLDPPID ALIVE` line per member (ORIGIN is `r`, `a`, `o` or `x`) |
 | `inspect` | human-readable report |
 | `cutover` | `freeze=ptrace\|signal\|none signal=N timeout=MS from=PID steal=0\|1 drain=0\|1 suppress=0\|1 dry_run=0\|1 pid=N...` |
 | `stop` | `signal=N` |
 | `handover` | the command's argv |
+| `attach` | no tokens. Replies `ok\n` with the pty master attached (`SCM_RIGHTS`; none if the job has let go of it) and keeps the connection: later it sends `taken-over\n` when another `attach` takes the terminal, or `exit CODE HOW\n` when the job has ended. Closing the connection detaches |
+| `adopt` | `criu=PATH pgid=P root=R... [new=1]`. The supervisor works the job out again from `/proc` and refuses `the job changed since it was checked` if its group or roots differ. `new=1`: the client started this family for the job, so it ends with the job |
 
 The CLI is the supported interface. The protocol is documented for debugging and may change.

@@ -84,13 +84,15 @@ handover: 4200 becomes ./build/newparent; it inherits 1 child and 1 fd
 
 | command | what it does |
 |---|---|
-| `focker run [-n NAME] [-d] [-l] -- CMD...` | start a family under a subreaper supervisor |
+| `focker run [-n NAME] [-d [-t]] [-l] -- CMD...` | start a family under a subreaper supervisor (`-t`: on a terminal focker holds) |
 | `focker cutover [opts] NAME PID...` | adopt PIDs away from their parent (alias: `adopt`) |
 | `focker handover NAME -- CMD...` | exec CMD in focker's place; it inherits children and fds (alias: `meet-the-parents`) |
 | `focker ps [-a]` | list families |
 | `focker tree NAME` | process tree, with adopted children marked |
 | `focker inspect NAME` | members, origins, exit statuses and held fds |
 | `focker logs [-f] [-p PID] NAME` | supervisor log, or a child's drained output |
+| `focker fg NAME` | attach this terminal to a family's terminal (Ctrl-P Ctrl-Q detaches; a second `fg` takes over) |
+| `focker adopt-external [-y] [--dry-run] NAME PID` | move a job from another terminal into a family, with criu |
 | `focker freeze / thaw NAME PID...` | SIGSTOP / SIGCONT a family member |
 | `focker stop [-s SIG] NAME` | signal the family's direct children |
 | `focker release NAME FD...` | close fds focker holds for adopted children (e.g. send a child EOF on stdin) |
@@ -110,5 +112,6 @@ Every command takes `--help`. Exit codes are `0` for success, `1` for a runtime 
 
 **focker can only adopt its own descendants.** That's a kernel rule, not a focker
 choice: orphans go to an *ancestor* subreaper. So start the old parent with
-`focker run` before you need to move anything. To move a process that was never
-started under focker, see the CRIU recipe in [HOWTO](docs/HOWTO.md#processes-not-started-under-focker).
+`focker run` before you need to move anything. To move a job that was never
+started under focker, `focker adopt-external` checkpoints it with criu and restores it
+under a family ([HOWTO](docs/HOWTO.md#processes-not-started-under-focker)).

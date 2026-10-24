@@ -27,7 +27,7 @@ whose tests it then has to keep passing.
 - [x] **Phase 5: Fd control and JSON** - `focker release`, `ps --json`, `inspect --json`
 - [x] **Phase 6: Loopback TCP takeover** - inet_diag peer matching for TCP between old parent and target
 - [x] **Phase 7: Async cutover** - non-blocking cutover inside the poll loop
-- [ ] **Phase 8: CRIU adoption** - adopt trees not started under focker, via a capability-granted `criu`
+- [x] **Phase 8: CRIU adoption** - adopt trees not started under focker, via a capability-granted `criu`
 - [ ] **Phase 9: Stubborn parents** - warn about TERM-catching parents, `--kill-after`, `--tree`
 - [ ] **Phase 10: focker wait** - block until members exit and return their exit code
 - [ ] **Phase 11: Invisible pause** - `freeze --ptrace`, a pause neither the job nor its parent sees
@@ -83,7 +83,10 @@ Plans:
   1. `focker adopt-external NAME PID` (name settled in planning) dumps the tree with criu and restores it under the family's supervisor, so its processes become members
   2. Without a capable criu it exits 1 with a message naming the `setcap` command, and changes nothing
   3. An integration test runs when a capable criu is present and is reported as `skip` otherwise
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [x] 08-01 — `run -d -t`, `focker fg`, `adopt-external` (checks, trial dump, prompt, the move), pipelines (steps in docs/superpowers/plans/2026-10-21-criu-adoption.md; spike in 08-SPIKE.md)
 
 ### Phase 9: Stubborn parents
 **Goal**: A cutover against a parent that traps, forwards or ignores TERM succeeds or says why up front
@@ -116,6 +119,7 @@ Plans:
 ### Phase 12: Pty takeover
 **Goal**: Jobs tied to a terminal can change parents or outlive their session too
 **Depends on**: Phase 7
+**Note** (2026-10-22): Phase 8 built the pty side already: a family terminal (held-fd kind `pty`, drained to the log), `run -d -t`, and `focker fg` to attach one. Phase 12 can reuse them for `--new-tty`.
 **Requirements**: PTY-01, PTY-02
 **Success Criteria** (what must be TRUE):
   1. A child of `script -q -c CMD /dev/null` keeps running and its terminal output is drained after `script` is cut over (kind `pty`)
@@ -131,7 +135,7 @@ Plans:
 | 5. Fd control and JSON | v2.0 | 1/1 | Complete | 2026-10-20 |
 | 6. Loopback TCP takeover | v2.0 | 1/1 | Complete | 2026-10-20 |
 | 7. Async cutover | v2.0 | 1/1 | Complete | 2026-10-21 |
-| 8. CRIU adoption | v2.0 | 0/TBD | Not started | - |
+| 8. CRIU adoption | v2.0 | 1/1 | Complete | 2026-10-22 |
 | 9. Stubborn parents | v2.0 | 0/TBD | Not started | - |
 | 10. focker wait | v2.0 | 0/TBD | Not started | - |
 | 11. Invisible pause | v2.0 | 0/TBD | Not started | - |

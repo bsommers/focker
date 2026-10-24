@@ -316,3 +316,57 @@ uint64_t proc_sigpending(pid_t pid)
     }
     return mask;
 }
+
+/* field N (1-based, N >= 3) of /proc/PID/stat; the comm field may hold spaces
+ * and parentheses, so counting starts after its last ')' */
+static long stat_field(pid_t pid, int n)
+{
+    char path[PATH_MAX], buf[1024];
+    snprintf(path, sizeof path, "%s/%d/stat", proc_root, pid);
+    if (read_small(path, buf, sizeof buf) < 0)
+        return -1;
+    char *p = strrchr(buf, ')');
+    if (!p)
+        return -1;
+    p++;
+    for (int i = 3; i <= n; i++) {
+        while (*p == ' ')
+            p++;
+        if (!*p)
+            return -1;
+        if (i == n)
+            return strtol(p, NULL, 10);
+        while (*p && *p != ' ')
+            p++;
+    }
+    return -1;
+}
+
+pid_t proc_pgid(pid_t pid)
+{
+    return (pid_t)stat_field(pid, 5);
+}
+
+pid_t proc_sid(pid_t pid)
+{
+    return (pid_t)stat_field(pid, 6);
+}
+
+int proc_tty_nr(pid_t pid)
+{
+    return (int)stat_field(pid, 7);
+}
+
+pid_t proc_tpgid(pid_t pid)
+{
+    return (pid_t)stat_field(pid, 8);
+}
+
+uid_t proc_uid(pid_t pid)
+{
+    char path[PATH_MAX], v[64];
+    snprintf(path, sizeof path, "%s/%d/status", proc_root, pid);
+    if (status_field(path, "Uid:", v, sizeof v) < 0)
+        return (uid_t)-1;
+    return (uid_t)strtoul(v, NULL, 10);
+}
